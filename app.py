@@ -3,7 +3,7 @@ import requests
 import time
 import json
 import re
-import numpy as np # NEW: Used for calculating statistics like median and percentiles
+import numpy as np
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
@@ -21,7 +21,7 @@ analyzer = SentimentIntensityAnalyzer()
 # --- CONFIGURATION (Settings) ---
 POSITIVE_THRESHOLD = 0.2
 NEGATIVE_THRESHOLD = -0.2
-DEFAULT_REVIEW_CHUNK_SIZE = 20 # How many reviews to return per page in the new /reviews endpoint
+DEFAULT_REVIEW_CHUNK_SIZE = 20
 
 # --- THEMATIC KEYWORDS (Centralized for the API) ---
 LENGTH_KEYWORDS = [
@@ -50,7 +50,12 @@ ALL_PATTERNS = {
     'value': value_pattern,
 }
 
-# --- HELPER FUNCTION: RUN SENTIMENT ANALYSIS ON A SINGLE REVIEW (FIX 3) ---
+# --- CACHE SETUP (Temporary in-memory cache) ---
+TEMP_REVIEW_CACHE = {} 
+CACHE_KEY_FORMAT = "{app_id}_{review_count}"
+
+
+# --- HELPER FUNCTION: RUN SENTIMENT ANALYSIS ON A SINGLE REVIEW ---
 def get_review_sentiment(review_text):
     """Calculates sentiment and returns a label."""
     vs = analyzer.polarity_scores(review_text)
@@ -68,7 +73,7 @@ def analyze_theme_reviews(review_list):
     positive_count = 0
     negative_count = 0
     
-    # NEW: Now relies on the sentiment_label added during collection
+    # Relies on the sentiment_label added during collection
     for review in review_list:
         if review.get('sentiment_label') == 'Positive':
             positive_count += 1
@@ -92,7 +97,7 @@ def analyze_theme_reviews(review_list):
         "total_analyzed": total_analyzed
     }
 
-# --- HELPER FUNCTION: CALCULATE PLAYTIME DISTRIBUTION (FIX 7) ---
+# --- HELPER FUNCTION: CALCULATE PLAYTIME DISTRIBUTION ---
 def calculate_playtime_distribution(all_reviews):
     playtimes = [r['playtime_hours'] for r in all_reviews if r['playtime_hours'] > 0]
     
@@ -131,16 +136,14 @@ def calculate_playtime_distribution(all_reviews):
 
 
 # -------------------------------------------------------------
-# API ENDPOINT 1: Steam Review Analysis (/analyze) - UPDATED
+# API ENDPOINT 1: Steam Review Analysis (/analyze) - CRITICAL FIX APPLIED
 # -------------------------------------------------------------
-# The backend now expects 'review_count' (e.g., 1000, 2000, 3000) (FIX 5)
 @app.route('/analyze', methods=['POST'])
 def analyze_steam_reviews_api():
     # 1. Get parameters from the request
     try:
         data = request.get_json()
         APP_ID = data.get('app_id')
-        # NEW: Expect total review count to fetch (e.g., 1000, 2000)
         review_count = data.get('review_count', 1000) 
 
         if not APP_ID:
@@ -151,8 +154,6 @@ def analyze_steam_reviews_api():
 
     # 2. Determine Collection Parameters
     MAX_REVIEWS_TO_COLLECT = review_count
-    
-    # Steam API limitation: 100 reviews per page
     max_pages_to_collect = MAX_REVIEWS_TO_COLLECT // 100
     if MAX_REVIEWS_TO_COLLECT % 100 != 0:
         max_pages_to_collect += 1
@@ -163,7 +164,7 @@ def analyze_steam_reviews_api():
     params = {
         'json': 1,
         'language': 'english',
-        'filter': 'recent',  # Always fetch recent, up to the count
+        'filter': 'recent',
         'num_per_page': 100,
         'cursor': '*'
     }
@@ -172,8 +173,8 @@ def analyze_steam_reviews_api():
     while params['cursor'] and page_count < max_pages_to_collect:
         page_count += 1
         try:
-            response = requests.get(API_URL, params=params, timeout=15) # Increased timeout
-            response.raise_for_status() # Raise exception for 4xx or 5xx status codes
+            response = requests.get(API_URL, params=params, timeout=15)
+            response.raise_for_status()
 
             data = response.json()
             if data.get('success') == 1:
@@ -185,12 +186,11 @@ def analyze_steam_reviews_api():
                     if len(all_reviews_raw) >= MAX_REVIEWS_TO_COLLECT:
                         break
                         
-                    # Fix 2 & 3: Playtime and Sentiment
                     review_data = {
                         'review_text': review.get('review', ""),
-                        # FIX 2: Playtime in minutes (playtime_forever) converted to hours
+                        # Playtime in minutes converted to hours
                         'playtime_hours': round(review.get('playtime_forever', 0) / 60, 1), 
-                        # FIX 3: Add sentiment label
+                        # Add sentiment label
                         'sentiment_label': get_review_sentiment(review.get('review', "")),
                         'theme_tags': [] # Placeholder for thematic tags
                     }
@@ -202,21 +202,19 @@ def analyze_steam_reviews_api():
                 break
         except requests.RequestException as e:
             print(f"API Request Error: {e}")
-            break
+            # Ensure we return a JSON error response on crash
+            return jsonify({"error": f"Failed to fetch reviews from Steam: {e}"}), 500
         except Exception as e:
             print(f"Unexpected Error during collection: {e}")
-            break
+            # Ensure we return a JSON error response on crash
+            return jsonify({"error": f"Unexpected server error during collection: {e}"}), 500
 
     # 3. Filtering and Thematic Tagging
-    
-    # Containers to hold reviews specifically filtered by theme
     themed_reviews = {
         'length': [],
         'grind': [],
         'value': []
     }
-    
-    # List to hold reviews with thematic tags (used by the new /reviews endpoint for pagination)
     all_themed_reviews = []
     
     for review in all_reviews_raw:
@@ -233,14 +231,14 @@ def analyze_steam_reviews_api():
             all_themed_reviews.append(review) # Store the tagged review
 
     # 4. Thematic Sentiment Analysis & Playtime Distribution
-    
-    # Run the analysis helper function for each thematic list
     length_analysis = analyze_theme_reviews(themed_reviews['length'])
     grind_analysis = analyze_theme_reviews(themed_reviews['grind'])
     value_analysis = analyze_theme_reviews(themed_reviews['value'])
-    
-    # FIX 7: Calculate Playtime Distribution
     playtime_distribution = calculate_playtime_distribution(all_reviews_raw)
+
+    # CRITICAL FIX: Save all_themed_reviews to the in-memory cache now
+    cache_key = CACHE_KEY_FORMAT.format(app_id=APP_ID, review_count=review_count)
+    TEMP_REVIEW_CACHE[cache_key] = all_themed_reviews
 
     # 5. Return the result
     return jsonify({
@@ -249,7 +247,7 @@ def analyze_steam_reviews_api():
         "review_count_used": review_count,
         "total_reviews_collected": len(all_reviews_raw),
         
-        "thematic_scores": { # Renamed from 'analysis_results' to match Flutter model
+        "thematic_scores": {
             "length": {
                 "found": length_analysis['total_analyzed'],
                 "positive_percent": length_analysis['positive_percent'],
@@ -267,19 +265,14 @@ def analyze_steam_reviews_api():
             }
         },
         
-        # FIX 7: Playtime Distribution Data
         "playtime_distribution": playtime_distribution,
-
-        # IMPORTANT: Reviews are NOT returned here. They are saved/cached for the /reviews endpoint.
-        # For a production system, you would save all_themed_reviews to a cache (like Redis)
-        # using the (APP_ID, review_count) as the key.
-        "total_themed_reviews": len(all_themed_reviews), # New field to help the frontend
+        "total_themed_reviews": len(all_themed_reviews),
         
     }), 200
 
 
 # -------------------------------------------------------------
-# API ENDPOINT 2: Game Name Search (/search) - FIX 1: IMAGE URL
+# API ENDPOINT 2: Game Name Search (/search) - FIX APPLIED
 # -------------------------------------------------------------
 @app.route('/search', methods=['POST'])
 def search_game():
@@ -312,14 +305,17 @@ def search_game():
         for item in store_data.get('items', []):
             game_id = item.get('id') or item.get('appid')
             name = item.get('name')
-            # FIX 1: The 'header_image' field is available in this API response!
             header_image = item.get('header_image', '') 
-
+            
             if game_id and name:
+                # FIX: Include missing fields expected by the Flutter Game model
                 matches.append({
                     "appid": str(game_id),
                     "name": name,
-                    "header_image_url": header_image # Corrected field name for Flutter
+                    "header_image_url": header_image,
+                    "release_date": item.get('release_date', ''), # Available in this API
+                    "developer": "N/A", # Not provided by this API endpoint
+                    "publisher": "N/A", # Not provided by this API endpoint
                 })
 
         matches = matches[:10] # Limit results
@@ -331,21 +327,14 @@ def search_game():
 
 
 # -------------------------------------------------------------
-# API ENDPOINT 3: Paginated Review Fetching (/reviews) - NEW ENDPOINT (FIX 4)
+# API ENDPOINT 3: Paginated Review Fetching (/reviews)
 # -------------------------------------------------------------
-# NOTE: This endpoint assumes the data (all_themed_reviews from /analyze) is cached.
-# For simplicity, we are using a temporary in-memory cache here, which IS NOT
-# suitable for production (Render will restart and wipe it).
-# Please ensure you implement a proper cache (Redis/DB) for production.
-TEMP_REVIEW_CACHE = {} 
-CACHE_KEY_FORMAT = "{app_id}_{review_count}"
-
 @app.route('/reviews', methods=['GET'])
 def get_paginated_reviews():
     app_id = request.args.get('app_id')
     offset = int(request.args.get('offset', 0))
     limit = int(request.args.get('limit', DEFAULT_REVIEW_CHUNK_SIZE))
-    total_count = int(request.args.get('total_count', 1000)) # The total scope of reviews to check
+    total_count = int(request.args.get('total_count', 1000))
 
     if not app_id:
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
@@ -356,7 +345,6 @@ def get_paginated_reviews():
     themed_reviews_list = TEMP_REVIEW_CACHE.get(cache_key)
 
     if not themed_reviews_list:
-        # If not in cache, the Flutter app needs to call /analyze first.
         return jsonify({"error": "Analysis data not found. Please run /analyze first."}), 404
 
     # 2. Extract the relevant slice for pagination
@@ -376,37 +364,8 @@ def get_paginated_reviews():
 
 
 # -------------------------------------------------------------
-# MAIN ENTRYPOINT
+# MAIN ENTRYPOINT - CLEANUP APPLIED
 # -------------------------------------------------------------
-if __name__ == '__main_':
-    # This must be run with a cache mechanism in mind.
-    # We need to monkey-patch the /analyze endpoint to save data to the cache
-    @app.after_request
-    def cache_reviews_after_analyze(response):
-        if request.endpoint == 'analyze_steam_reviews_api' and response.status_code == 200:
-            try:
-                data = json.loads(response.get_data(as_text=True))
-                # Only cache the data structure that holds the themed reviews (which must be computed by /analyze)
-                themed_reviews = data.pop('time_centric_reviews', []) 
-                
-                # We need the parameters used to generate this specific list
-                app_id = data.get('app_id')
-                review_count = data.get('review_count_used')
-                
-                if app_id and review_count is not None:
-                    cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_count=review_count)
-                    # Save the FULL list of themed reviews to the cache
-                    TEMP_REVIEW_CACHE[cache_key] = themed_reviews 
-                    
-                # Re-add the total count for the frontend, but keep the list out of the response body (it's too large)
-                data['total_themed_reviews'] = len(themed_reviews)
-                response.set_data(json.dumps(data))
-
-            except Exception as e:
-                # Log any caching errors but do not block the main response
-                print(f"Error during post-analysis caching: {e}")
-                
-        return response
-
-    # debug=True for development – turn off in production
+if __name__ == '__main__':
+    # You may want to set debug=False when deploying to Render/production
     app.run(host='0.0.0.0', port=5000, debug=True)
