@@ -1,14 +1,41 @@
 from flask import Flask, request, jsonify # IMPORTS: Flask is required for the web structure
-import requests
+import requests # <-- ADDED: Needed for calling the Steam App List API
 import time
-import json
-import re 
+import json # <-- ALREADY PRESENT
+import re
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
+# --- NEW BLOCK 1: Global Variable to store the app list ---
+STEAM_APP_LIST = []
+
 # Initialize Flask app
 # THIS LINE IS CRITICAL: It creates the 'app' object that Gunicorn looks for!
-app = Flask(__name__) 
+app = Flask(__name__)
+
+# --- NEW BLOCK 2: Function to load the App List when the server starts ---
+def load_steam_app_list():
+    """Fetches the full list of Steam games (name and appid) and caches it."""
+    global STEAM_APP_LIST
+    try:
+        # This is a public, official Steam API endpoint for the full app list
+        url = "https://api.steampowered.com/ISteamApps/GetAppList/v2/"
+        # Use requests, which was imported at the top
+        response = requests.get(url, timeout=30)
+        response.raise_for_status() # Raise an error for bad status codes
+        
+        # The list is deeply nested, so we extract the actual list of dictionaries
+        data = response.json()
+        STEAM_APP_LIST = data['applist']['apps']
+        print(f"Successfully loaded {len(STEAM_APP_LIST)} Steam apps.")
+    except Exception as e:
+        print(f"Error loading Steam app list: {e}")
+        STEAM_APP_LIST = [] # Ensure it's empty if it fails
+
+# Call the function when the server starts up (outside of a function/route)
+load_steam_app_list()
+# --- END NEW BLOCK 2 ---
+
 
 # Download VADER lexicon data and initialize globally
 # This ensures VADER is available on the server during the startup process.
@@ -22,14 +49,14 @@ except LookupError:
 analyzer = SentimentIntensityAnalyzer()
 
 # --- CONFIGURATION (Settings) ---
-MAX_PAGES = 10 
+MAX_PAGES = 10
 POSITIVE_THRESHOLD = 0.2
 NEGATIVE_THRESHOLD = -0.2
 
 # Your Time-Centric Keywords (Expanded and centralized for the API)
 TIME_KEYWORDS = [
     "second", "seconds", "short playtime", "play time", "player time",
-    "minute", "minutes", "long lifespan", "life span", 
+    "minute", "minutes", "long lifespan", "life span",
     "hour", "hours", "hourly", "length", "lengths", "lengthy", "limited time",
     "day", "days", "daily", "session", "sessions", "roadmap", "road map",
     "week", "weeks", "weekly", "season", "seasons", "seasonal",
@@ -40,93 +67,9 @@ keyword_pattern = re.compile('|'.join(re.escape(k) for k in TIME_KEYWORDS), re.I
 
 
 # -------------------------------------------------------------
-# THE API ENDPOINT FUNCTION (This is what your mobile app calls)
+# THE API ENDPOINT FUNCTION (Your original function)
 # -------------------------------------------------------------
 
 # This decorator creates the API URL: /analyze, and specifies it only accepts POST requests
 @app.route('/analyze', methods=['POST'])
-def analyze_steam_reviews_api():
-    
-    # 1. Get the App ID from the request
-    try:
-        # The app will send the App ID in the request body (JSON)
-        data = request.get_json()
-        APP_ID = data.get('app_id')
-        
-        if not APP_ID:
-            # Returns an error if the App ID is missing
-            return jsonify({"error": "Missing 'app_id' in request body. Please provide a Steam App ID."}), 400
-            
-    except Exception as e:
-        return jsonify({"error": f"Error parsing request: {e}"}), 400
-
-    
-    # --- STEPS 1-3: Your Core Logic (Inside the API function) ---
-    all_reviews_text = []
-    API_URL = f"https://store.steampowered.com/appreviews/{APP_ID}"
-    params = {
-        'json': 1, 'language': 'english', 'filter': 'recent',
-        'num_per_page': 100, 'cursor': '*'
-    }
-    
-    # Review Collection Loop
-    page_count = 0
-    while params['cursor'] and page_count < MAX_PAGES:
-        page_count += 1
-        try:
-            # Setting a timeout is important for serverless functions
-            response = requests.get(API_URL, params=params, timeout=10) 
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('success') == 1:
-                    reviews_on_page = data.get('reviews', [])
-                    if not reviews_on_page: break
-                        
-                    for review in reviews_on_page:
-                        all_reviews_text.append(review['review'])
-                        
-                    params['cursor'] = data.get('cursor', None)
-                    time.sleep(0.5) # Reduced sleep for faster server execution
-                else: break
-            else: break
-        except Exception:
-            break
-
-    # Filtering for time-centric language
-    time_centric_reviews = []
-    for review_text in all_reviews_text:
-        if keyword_pattern.search(review_text):
-            time_centric_reviews.append(review_text)
-
-    # Sentiment Analysis
-    positive_time_count = 0
-    negative_time_count = 0
-
-    for review in time_centric_reviews:
-        vs = analyzer.polarity_scores(review)
-        compound_score = vs['compound']
-        
-        if compound_score >= POSITIVE_THRESHOLD:
-            positive_time_count += 1
-        elif compound_score <= NEGATIVE_THRESHOLD:
-            negative_time_count += 1
-            
-    total_analyzed = positive_time_count + negative_time_count
-
-    if total_analyzed > 0:
-        positive_percent = (positive_time_count / total_analyzed) * 100
-        negative_percent = (negative_time_count / total_analyzed) * 100
-    else:
-        positive_percent = 0.0
-        negative_percent = 0.0
-
-    # 4. Return the result in a clean JSON format
-    # This returns the data the mobile app needs!
-    return jsonify({
-        "status": "success",
-        "app_id": APP_ID,
-        "total_reviews_collected": len(all_reviews_text),
-        "time_centric_reviews_found": len(time_centric_reviews),
-        "positive_sentiment_percent": round(positive_percent, 2),
-        "negative_sentiment_percent": round(negative_percent, 2)
-    })
+def analyze
