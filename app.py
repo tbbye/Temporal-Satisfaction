@@ -7,31 +7,20 @@ import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 # --- GLOBAL VARIABLES ---
-STEAM_APP_LIST = []
+# This list is now DEPRECATED/EMPTY because we no longer try to cache the whole list.
+STEAM_APP_LIST = [] 
 
 # Initialize Flask app
 app = Flask(__name__)
 
-# --- FUNCTION: Load Steam App List ---
+# -------------------------------------
+# --- NEW FUNCTION: Load Steam App List ---
+# This function is now empty to bypass the slow and unreliable startup API call.
 def load_steam_app_list():
-    """Fetches the full list of Steam games (name and appid) and caches it."""
-    global STEAM_APP_LIST
-    try:
-        # Public Steam API endpoint
-        url = "https://api.steampowered.com/ISteamApps/GetAppList/v2/"
-        response = requests.get(url, timeout=30)
-        response.raise_for_status() # Raise an error for bad status codes
-        
-        # Extract the list of dictionaries
-        data = response.json()
-        STEAM_APP_LIST = data['applist']['apps']
-        print(f"Successfully loaded {len(STEAM_APP_LIST)} Steam apps.")
-    except Exception as e:
-        print(f"Error loading Steam app list: {e}")
-        STEAM_APP_LIST = []
+    pass
 
 # Call the function when the server starts up 
-load_steam_app_list()
+load_steam_app_list() 
 # -------------------------------------
 
 
@@ -62,7 +51,7 @@ keyword_pattern = re.compile('|'.join(re.escape(k) for k in TIME_KEYWORDS), re.I
 
 
 # -------------------------------------------------------------
-# API ENDPOINT 1: Steam Review Analysis (/analyze)
+# API ENDPOINT 1: Steam Review Analysis (/analyze) - UNCHANGED
 # -------------------------------------------------------------
 @app.route('/analyze', methods=['POST'])
 def analyze_steam_reviews_api():
@@ -148,32 +137,49 @@ def analyze_steam_reviews_api():
     })
 
 # -------------------------------------------------------------
-# API ENDPOINT 2: Game Name Search (/search)
+# API ENDPOINT 2: Game Name Search (/search) - NEW LOGIC
 # -------------------------------------------------------------
 @app.route('/search', methods=['POST'])
 def search_game():
     data = request.get_json()
-    # Expect the mobile app to send 'name'
-    partial_name = data.get('name', '').lower()
-
-    # Check if a name was provided and if the app list was successfully loaded
-    if not partial_name or not STEAM_APP_LIST:
+    partial_name = data.get('name', '')
+    
+    if not partial_name:
         return jsonify({"results": []}), 200
 
-    # Filter the global list for matches
-    matches = []
+    # We call the reliable Steam Store API directly for the search
+    SEARCH_API_URL = "https://store.steampowered.com/api/storesearch"
+    
+    params = {
+        'term': partial_name,
+        'l': 'english',
+        'cc': 'us',
+        'request': 1,
+        'query': partial_name,
+        'category1': '998', # Filter for Games
+        'page': 1,
+        'excluded_tags': '21,39,40' # Exclude Early Access, VR, and Software tags
+    }
 
-    # Iterate through the cached list for partial name matches
-    for app_data in STEAM_APP_LIST:
-        game_name = app_data.get('name', '').lower()
-        if partial_name in game_name:
+    try:
+        response = requests.get(SEARCH_API_URL, params=params, timeout=10)
+        response.raise_for_status() 
+        
+        data = response.json()
+        
+        # Format the results into the clean list structure your Flutter app expects
+        matches = []
+        for item in data.get('items', []):
             matches.append({
-                "appid": str(app_data['appid']), # Return ID as string
-                "name": app_data['name']
+                "appid": str(item['appid']),
+                "name": item['name']
             })
-
-        # Limit results to keep the response fast and small for the mobile app
-        if len(matches) >= 10:
-            break
-
-    return jsonify({"results": matches}), 200
+            
+        # Limit results to 10
+        matches = matches[:10]
+        
+        return jsonify({"results": matches}), 200
+        
+    except Exception as e:
+        print(f"Error during Steam search API call: {e}")
+        return jsonify({"error": "Failed to connect to Steam Search API."}), 500
