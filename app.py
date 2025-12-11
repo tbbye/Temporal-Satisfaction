@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import requests
 import time
 import json
@@ -6,6 +6,7 @@ import re
 import numpy as np
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
+import io # NEW: For handling CSV in memory
 
 # --- GLOBAL INITIALIZATION ---
 app = Flask(__name__)
@@ -213,7 +214,7 @@ def analyze_steam_reviews_api():
     while params['cursor'] and page_count < max_pages_to_collect:
         page_count += 1
         try:
-            response = requests.get(API_URL, params=params, timeout=15)
+            response = requests.get(API_URL, params=params, timeout=30) # Increased timeout to 30s
             response.raise_for_status()
 
             data = response.json()
@@ -226,10 +227,10 @@ def analyze_steam_reviews_api():
                     if len(all_reviews_raw) >= MAX_REVIEWS_TO_COLLECT:
                         break
 
-                    # 🔧 FIX: get playtime from the nested "author" object
+                    # Get playtime from the nested "author" object
                     author = review.get('author', {}) or {}
                     playtime_minutes = author.get('playtime_at_review',
-                                                  author.get('playtime_forever', 0))
+                                                 author.get('playtime_forever', 0))
 
                     review_text = review.get('review', "")
 
@@ -242,7 +243,8 @@ def analyze_steam_reviews_api():
                     all_reviews_raw.append(review_data)
 
                 params['cursor'] = data.get('cursor', None)
-                time.sleep(0.5)
+                # FIX: Increased sleep time to 1.0 seconds to mitigate API rate-limiting/server load
+                time.sleep(1.0) 
             else:
                 break
         except requests.RequestException as e:
@@ -349,7 +351,7 @@ def search_game():
             game_id = item.get('id') or item.get('appid')
             name = item.get('name')
 
-            # 🔧 FIX: Build a usable header image URL
+            # Build a usable header image URL
             header_image = (
                 item.get('header_image')
                 or item.get('tiny_image')
@@ -410,6 +412,57 @@ def get_paginated_reviews():
         "offset": offset,
         "limit": limit
     }), 200
+
+
+# -------------------------------------------------------------
+# NEW API ENDPOINT: Export Reviews to CSV (/export)
+# -------------------------------------------------------------
+@app.route('/export', methods=['GET'])
+def export_reviews_csv():
+    app_id = request.args.get('app_id')
+    total_count = int(request.args.get('total_count', 1000))
+    
+    if not app_id:
+        return jsonify({"error": "Missing 'app_id' parameter."}), 400
+
+    cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_count=total_count)
+    
+    # Retrieve the full list of reviews from the cache
+    all_themed_reviews = TEMP_REVIEW_CACHE.get(cache_key)
+
+    if not all_themed_reviews:
+        return jsonify({"error": "Review data not found in cache. Please run /analyze first."}), 404
+
+    # Use an in-memory file for CSV generation
+    output = io.StringIO()
+    
+    # CSV Header
+    output.write("Sentiment Label,Playtime (Hours),Theme Tags,Review Text\n")
+    
+    # Write review data
+    for review in all_themed_reviews:
+        sentiment = review.get('sentiment_label', 'neutral')
+        playtime = review.get('playtime_hours', 0.0)
+        # Convert list of tags to a comma-separated string for one CSV column
+        tags = "|".join(review.get('theme_tags', []))
+        # Remove newlines and commas from the review text to avoid breaking CSV format
+        text = review.get('review_text', "").replace('\n', ' ').replace(',', ';').strip() 
+        
+        output.write(f"{sentiment},{playtime},{tags},{text}\n")
+
+    # Rewind the in-memory file to the beginning
+    output.seek(0)
+    
+    # Create the Flask response for file download
+    file_name = f"steam_reviews_{app_id}_{total_count}_themed.csv"
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={
+            "Content-Disposition": f"attachment;filename={file_name}",
+            "Cache-Control": "no-cache"
+        }
+    )
 
 
 # -------------------------------------------------------------
