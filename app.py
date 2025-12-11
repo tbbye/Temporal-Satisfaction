@@ -6,7 +6,7 @@ import re
 import numpy as np
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
-import io # NEW: For handling CSV in memory
+import io  # For handling CSV in memory
 
 # --- GLOBAL INITIALIZATION ---
 app = Flask(__name__)
@@ -26,13 +26,12 @@ DEFAULT_REVIEW_CHUNK_SIZE = 20
 
 # --- THEMATIC KEYWORDS (Centralized for the API) - VALUE LIST REVISED FOR TIME RELATIONSHIP ---
 LENGTH_KEYWORDS = [
-    # ... (Keep this list as previously updated)
-    "hour", "hours", "length", "lengths", "lengthy", "short", "long", 
+    "hour", "hours", "length", "lengths", "lengthy", "short", "long",
     "campaign", "time sink", "time investment", "time commitment",
-    "second", "seconds", "minute", "minutes", "hourly", 
-    "day", "days", "weekly", "month", "months", 
+    "second", "seconds", "minute", "minutes", "hourly",
+    "day", "days", "weekly", "month", "months",
     "quarterly", "year", "years", "yearly", "annual",
-    "session", "sessions", "playtime", "play time", "player time", 
+    "session", "sessions", "playtime", "play time", "player time",
     "limited time",
     "runtime", "run time",
     "playthrough", "play-through",
@@ -41,27 +40,26 @@ LENGTH_KEYWORDS = [
     "hours in"
 ]
 GRIND_KEYWORDS = [
-    # ... (Keep this list as previously updated)
-    "grind", "grindy", "farming", "farm", "repetitive", "repetition", 
+    "grind", "grindy", "farming", "farm", "repetitive", "repetition",
     "burnout", "dailies", "daily", "chore", "time waste",
     "waste of time", "time waster", "time-waster",
     "time wasting", "time-wasting",
     "time-consuming", "time consuming",
     "busywork", "padding", "filler",
-    "tedious", "tedium", "tedius", 
+    "tedious", "tedium", "tedius",
     "grindfest", "grind fest", "mindless grind",
     "time gate", "time gated", "time-gated",
     "timegate", "timegated"
 ]
 VALUE_KEYWORDS = [
-    # Time-Relational Value (Keeps all keywords explicitly linking worth/content to time)
-    "worth it", "value for money", "money well spent", 
-    "replayable", "replayability", "content updates", 
-    "longevity", "shelf life", 
+    # Time-Relational Value
+    "worth it", "value for money", "money well spent",
+    "replayable", "replayability", "content updates",
+    "longevity", "shelf life",
     "lifespan", "life span", "roadmap", "road map", "season", "seasons", "seasonal",
 
     # Explicit Time/Price Conjunctions
-    "too short for the price", 
+    "too short for the price",
     "worth the time", "not worth the time",
     "time well spent",
     "good use of time",
@@ -113,7 +111,6 @@ def analyze_theme_reviews(review_list):
     positive_count = 0
     negative_count = 0
 
-    # Relies on the sentiment_label added during collection
     for review in review_list:
         if review.get('sentiment_label') == 'Positive':
             positive_count += 1
@@ -144,7 +141,9 @@ def calculate_playtime_distribution(all_reviews):
 
     if not playtimes:
         return {
-            "median_hours": 0.0, "percentile_25th": 0.0, "percentile_75th": 0.0,
+            "median_hours": 0.0,
+            "percentile_25th": 0.0,
+            "percentile_75th": 0.0,
             "interpretation": "Not enough data with recorded playtime to analyze distribution.",
             "histogram_buckets": [0.0] * 5
         }
@@ -155,11 +154,10 @@ def calculate_playtime_distribution(all_reviews):
     p25 = np.percentile(arr, 25)
     p75 = np.percentile(arr, 75)
 
-    # Create Histogram Bins: e.g., 0-1h, 1-5h, 5-20h, 20-50h, 50+h (Adjust as needed)
+    # 0-1h, 1-5h, 5-20h, 20-50h, 50+h
     bins = [0, 1, 5, 20, 50, arr.max() + 1]
     hist, _ = np.histogram(arr, bins=bins)
 
-    # Interpretation Logic
     if p75 > 50 and median > 10:
         interp = "Players show high dedication, with the middle 50% spending over 10 hours."
     elif p75 > 10 and median < 5:
@@ -183,9 +181,9 @@ def calculate_playtime_distribution(all_reviews):
 def analyze_steam_reviews_api():
     # 1. Get parameters from the request
     try:
-        data = request.get_json()
+        data = request.get_json(force=True) or {}
         APP_ID = data.get('app_id')
-        review_count = data.get('review_count', 1000)
+        review_count = int(data.get('review_count', 1000) or 1000)
 
         if not APP_ID:
             return jsonify({"error": "Missing 'app_id' in request body."}), 400
@@ -193,13 +191,12 @@ def analyze_steam_reviews_api():
     except Exception as e:
         return jsonify({"error": f"Error parsing request: {e}"}), 400
 
-    # 2. Determine Collection Parameters
+    # 2. Determine collection parameters
     MAX_REVIEWS_TO_COLLECT = review_count
     max_pages_to_collect = MAX_REVIEWS_TO_COLLECT // 100
     if MAX_REVIEWS_TO_COLLECT % 100 != 0:
         max_pages_to_collect += 1
 
-    # --- Review Collection Loop ---
     all_reviews_raw = []
     API_URL = f"https://store.steampowered.com/appreviews/{APP_ID}"
     params = {
@@ -210,49 +207,61 @@ def analyze_steam_reviews_api():
         'cursor': '*'
     }
 
+    # --- Review Collection Loop ---
     page_count = 0
     while params['cursor'] and page_count < max_pages_to_collect:
         page_count += 1
         try:
-            response = requests.get(API_URL, params=params, timeout=30) # Increased timeout to 30s
+            response = requests.get(API_URL, params=params, timeout=30)
             response.raise_for_status()
 
-            data = response.json()
-            if data.get('success') == 1:
-                reviews_on_page = data.get('reviews', [])
-                if not reviews_on_page or len(all_reviews_raw) >= MAX_REVIEWS_TO_COLLECT:
+            try:
+                data = response.json()
+            except ValueError as e:
+                print(f"Non-JSON response from Steam, stopping collection: {e}")
+                break
+
+            if data.get('success') != 1:
+                # Steam returned a valid JSON but not a 'success' payload
+                break
+
+            reviews_on_page = data.get('reviews', [])
+            if not reviews_on_page:
+                break
+
+            for review in reviews_on_page:
+                if len(all_reviews_raw) >= MAX_REVIEWS_TO_COLLECT:
                     break
 
-                for review in reviews_on_page:
-                    if len(all_reviews_raw) >= MAX_REVIEWS_TO_COLLECT:
-                        break
+                author = review.get('author', {}) or {}
+                playtime_minutes = author.get('playtime_at_review',
+                                             author.get('playtime_forever', 0))
 
-                    # Get playtime from the nested "author" object
-                    author = review.get('author', {}) or {}
-                    playtime_minutes = author.get('playtime_at_review',
-                                                 author.get('playtime_forever', 0))
+                review_text = review.get('review', "") or ""
 
-                    review_text = review.get('review', "")
+                review_data = {
+                    'review_text': review_text,
+                    'playtime_hours': round(playtime_minutes / 60.0, 1),
+                    'sentiment_label': get_review_sentiment(review_text),
+                    'theme_tags': []
+                }
+                all_reviews_raw.append(review_data)
 
-                    review_data = {
-                        'review_text': review_text,
-                        'playtime_hours': round(playtime_minutes / 60.0, 1),
-                        'sentiment_label': get_review_sentiment(review_text),
-                        'theme_tags': []
-                    }
-                    all_reviews_raw.append(review_data)
-
-                params['cursor'] = data.get('cursor', None)
-                # Reduced delay to keep things responsive but still polite to Steam
-                time.sleep(0.15) 
-            else:
+            params['cursor'] = data.get('cursor') or None
+            if not params['cursor']:
                 break
+
+            # Small delay so we don't hammer Steam
+            time.sleep(0.15)
+
         except requests.RequestException as e:
-            print(f"API Request Error: {e}")
-            return jsonify({"error": f"Failed to fetch reviews from Steam: {e}"}), 500
+            # Network / HTTP error – stop trying, but keep what we have
+            print(f"API Request Error while fetching reviews: {e}")
+            break
         except Exception as e:
+            # Anything unexpected during collection – stop, but don't 500
             print(f"Unexpected Error during collection: {e}")
-            return jsonify({"error": f"Unexpected server error during collection: {e}"}), 500
+            break
 
     # 3. Filtering and Thematic Tagging
     themed_reviews = {
@@ -265,7 +274,6 @@ def analyze_steam_reviews_api():
     for review in all_reviews_raw:
         is_themed = False
 
-        # Check against each thematic pattern and tag the review
         for theme, pattern in ALL_PATTERNS.items():
             if pattern.search(review['review_text']):
                 review['theme_tags'].append(theme)
@@ -273,23 +281,35 @@ def analyze_steam_reviews_api():
                 is_themed = True
 
         if is_themed:
-            all_themed_reviews.append(review)  # Store the tagged review
+            all_themed_reviews.append(review)
 
     # 4. Thematic Sentiment Analysis & Playtime Distribution
+    # (safe even if lists are empty)
     length_analysis = analyze_theme_reviews(themed_reviews['length'])
     grind_analysis = analyze_theme_reviews(themed_reviews['grind'])
     value_analysis = analyze_theme_reviews(themed_reviews['value'])
-    playtime_distribution = calculate_playtime_distribution(all_reviews_raw)
+
+    try:
+        playtime_distribution = calculate_playtime_distribution(all_reviews_raw)
+    except Exception as e:
+        print(f"Error calculating playtime distribution: {e}")
+        playtime_distribution = {
+            "median_hours": 0.0,
+            "percentile_25th": 0.0,
+            "percentile_75th": 0.0,
+            "interpretation": "Playtime distribution could not be calculated.",
+            "histogram_buckets": [0.0] * 5
+        }
 
     # Save all_themed_reviews to the in-memory cache now
     cache_key = CACHE_KEY_FORMAT.format(app_id=APP_ID, review_count=review_count)
     TEMP_REVIEW_CACHE[cache_key] = all_themed_reviews
 
-    # 5. Return the result
+    # 5. Return the result (always 200 for analysis logic)
     return jsonify({
         "status": "success",
         "app_id": APP_ID,
-        "review_count_used": review_count,
+        "review_count_used": review_count,          # keep as requested count for cache-key consistency
         "total_reviews_collected": len(all_reviews_raw),
 
         "thematic_scores": {
@@ -321,7 +341,6 @@ def analyze_steam_reviews_api():
 # -------------------------------------------------------------
 @app.route('/search', methods=['POST'])
 def search_game():
-    # 1. Parse the incoming JSON
     try:
         data = request.get_json(force=True) or {}
     except Exception as e:
@@ -331,7 +350,6 @@ def search_game():
     if not partial_name:
         return jsonify({"results": []}), 200
 
-    # 2. Use the Steam Store Search API
     SEARCH_API_URL = "https://store.steampowered.com/api/storesearch/"
     params = {
         'term': partial_name,
@@ -351,7 +369,6 @@ def search_game():
             game_id = item.get('id') or item.get('appid')
             name = item.get('name')
 
-            # Build a usable header image URL
             header_image = (
                 item.get('header_image')
                 or item.get('tiny_image')
@@ -369,7 +386,7 @@ def search_game():
                     "publisher": "N/A",
                 })
 
-        matches = matches[:10]  # Limit results
+        matches = matches[:10]
         return jsonify({"results": matches}), 200
 
     except Exception as e:
@@ -392,20 +409,17 @@ def get_paginated_reviews():
 
     cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_count=total_count)
 
-    # 1. Check if the themed reviews list is in the cache (from the preceding /analyze call)
+    # Only treat "None" as missing; empty list is a valid "no themed reviews" case
     themed_reviews_list = TEMP_REVIEW_CACHE.get(cache_key)
-
-    if not themed_reviews_list:
+    if themed_reviews_list is None:
         return jsonify({"error": "Analysis data not found. Please run /analyze first."}), 404
 
-    # 2. Extract the relevant slice for pagination
     start_index = offset
     end_index = offset + limit
 
     reviews_page = themed_reviews_list[start_index:end_index]
     total_available_themed = len(themed_reviews_list)
 
-    # 3. Return the paginated chunk
     return jsonify({
         "reviews": reviews_page,
         "total_available": total_available_themed,
@@ -415,45 +429,36 @@ def get_paginated_reviews():
 
 
 # -------------------------------------------------------------
-# NEW API ENDPOINT: Export Reviews to CSV (/export)
+# API ENDPOINT 4: Export Reviews to CSV (/export)
 # -------------------------------------------------------------
 @app.route('/export', methods=['GET'])
 def export_reviews_csv():
     app_id = request.args.get('app_id')
     total_count = int(request.args.get('total_count', 1000))
-    
+
     if not app_id:
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
 
     cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_count=total_count)
-    
-    # Retrieve the full list of reviews from the cache
-    all_themed_reviews = TEMP_REVIEW_CACHE.get(cache_key)
 
-    if not all_themed_reviews:
+    all_themed_reviews = TEMP_REVIEW_CACHE.get(cache_key)
+    # Again, only treat None as "no analysis"; empty list is fine
+    if all_themed_reviews is None:
         return jsonify({"error": "Review data not found in cache. Please run /analyze first."}), 404
 
-    # Use an in-memory file for CSV generation
     output = io.StringIO()
-    
-    # CSV Header
     output.write("Sentiment Label,Playtime (Hours),Theme Tags,Review Text\n")
-    
-    # Write review data
+
     for review in all_themed_reviews:
         sentiment = review.get('sentiment_label', 'neutral')
         playtime = review.get('playtime_hours', 0.0)
-        # Convert list of tags to a comma-separated string for one CSV column
         tags = "|".join(review.get('theme_tags', []))
-        # Remove newlines and commas from the review text to avoid breaking CSV format
-        text = review.get('review_text', "").replace('\n', ' ').replace(',', ';').strip() 
-        
+        text = review.get('review_text', "").replace('\n', ' ').replace(',', ';').strip()
+
         output.write(f"{sentiment},{playtime},{tags},{text}\n")
 
-    # Rewind the in-memory file to the beginning
     output.seek(0)
-    
-    # Create the Flask response for file download
+
     file_name = f"steam_reviews_{app_id}_{total_count}_themed.csv"
     return Response(
         output.getvalue(),
