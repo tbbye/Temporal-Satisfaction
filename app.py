@@ -23,19 +23,57 @@ POSITIVE_THRESHOLD = 0.2
 NEGATIVE_THRESHOLD = -0.2
 DEFAULT_REVIEW_CHUNK_SIZE = 20
 
-# --- THEMATIC KEYWORDS (Centralized for the API) ---
+# --- THEMATIC KEYWORDS (Centralized for the API) - ALL NEW KEYWORDS ADDED ---
 LENGTH_KEYWORDS = [
+    # Existing core terms (kept for reference)
     "hour", "hours", "length", "lengths", "lengthy", "short", "long", 
-    "campaign", "time sink", "time investment", "time commitment"
+    "campaign", "time sink", "time investment", "time commitment",
+    # ADDED: Time units and duration synonyms (from previous fix)
+    "second", "seconds", "minute", "minutes", "hourly", 
+    "day", "days", "weekly", "month", "months", 
+    "quarterly", "year", "years", "yearly", "annual",
+    "session", "sessions", "playtime", "play time", "player time", 
+    "limited time",
+    # NEW ADDITIONS: Game/play duration terms
+    "runtime", "run time",
+    "playthrough", "play-through",
+    "game length", "story length",
+    "beat in", "beaten in", "finished in", "finish in",
+    "hours in"
 ]
 GRIND_KEYWORDS = [
+    # Core grind terms
     "grind", "grindy", "farming", "farm", "repetitive", "repetition", 
-    "burnout", "dailies", "daily", "chore", "time waste"
+    "burnout", "dailies", "daily", "chore", "time waste",
+    # NEW ADDITIONS: Tedium, time-wasting, time-gate
+    "waste of time", "time waster", "time-waster",
+    "time wasting", "time-wasting",
+    "time-consuming", "time consuming",
+    "busywork", "padding", "filler",
+    "tedious", "tedium", "tedius", # Including common typo
+    "grindfest", "grind fest", "mindless grind",
+    "time gate", "time gated", "time-gated",
+    "timegate", "timegated"
 ]
 VALUE_KEYWORDS = [
+    # Core value terms
     "worth it", "value for money", "money well spent", "replayable", 
     "replayability", "too short for the price", "content updates", 
-    "longevity", "shelf life", "price"
+    "longevity", "shelf life", "price",
+    "lifespan", "life span", "roadmap", "road map", "season", "seasons", "seasonal",
+    # NEW ADDITIONS: Respect for time/Value comparison terms
+    "worth the time", "not worth the time",
+    "time well spent",
+    "good use of time",
+    "waste of time and money",
+    "hours of content", "hours of gameplay",
+    "bang for the buck", "get your money's worth",
+    "per hour", "per-hour",
+    "respect my time", "respects my time", "respect your time", "respects your time",
+    "respect the player's time", "respect the players' time", "respects the player's time",
+    "respecting my time", "respecting your time",
+    "waste my time", "wastes my time", "waste your time", "wastes your time",
+    "total waste of time", "complete waste of time",
 ]
 
 # Compile patterns for fast searching
@@ -188,8 +226,8 @@ def analyze_steam_reviews_api():
                         
                     review_data = {
                         'review_text': review.get('review', ""),
-                        # Playtime in minutes converted to hours
-                        'playtime_hours': round(review.get('playtime_forever', 0) / 60, 1), 
+                        # CRITICAL FIX: Use 'playtime_at_review' for accurate review playtime
+                        'playtime_hours': round(review.get('playtime_at_review', 0) / 60, 1), 
                         # Add sentiment label
                         'sentiment_label': get_review_sentiment(review.get('review', "")),
                         'theme_tags': [] # Placeholder for thematic tags
@@ -202,11 +240,9 @@ def analyze_steam_reviews_api():
                 break
         except requests.RequestException as e:
             print(f"API Request Error: {e}")
-            # Ensure we return a JSON error response on crash
             return jsonify({"error": f"Failed to fetch reviews from Steam: {e}"}), 500
         except Exception as e:
             print(f"Unexpected Error during collection: {e}")
-            # Ensure we return a JSON error response on crash
             return jsonify({"error": f"Unexpected server error during collection: {e}"}), 500
 
     # 3. Filtering and Thematic Tagging
@@ -236,7 +272,7 @@ def analyze_steam_reviews_api():
     value_analysis = analyze_theme_reviews(themed_reviews['value'])
     playtime_distribution = calculate_playtime_distribution(all_reviews_raw)
 
-    # CRITICAL FIX: Save all_themed_reviews to the in-memory cache now
+    # Save all_themed_reviews to the in-memory cache now
     cache_key = CACHE_KEY_FORMAT.format(app_id=APP_ID, review_count=review_count)
     TEMP_REVIEW_CACHE[cache_key] = all_themed_reviews
 
@@ -272,7 +308,7 @@ def analyze_steam_reviews_api():
 
 
 # -------------------------------------------------------------
-# API ENDPOINT 2: Game Name Search (/search) - FIX APPLIED
+# API ENDPOINT 2: Game Name Search (/search)
 # -------------------------------------------------------------
 @app.route('/search', methods=['POST'])
 def search_game():
@@ -308,14 +344,13 @@ def search_game():
             header_image = item.get('header_image', '') 
             
             if game_id and name:
-                # FIX: Include missing fields expected by the Flutter Game model
                 matches.append({
                     "appid": str(game_id),
                     "name": name,
                     "header_image_url": header_image,
-                    "release_date": item.get('release_date', ''), # Available in this API
-                    "developer": "N/A", # Not provided by this API endpoint
-                    "publisher": "N/A", # Not provided by this API endpoint
+                    "release_date": item.get('release_date', ''),
+                    "developer": "N/A", 
+                    "publisher": "N/A", 
                 })
 
         matches = matches[:10] # Limit results
@@ -364,8 +399,7 @@ def get_paginated_reviews():
 
 
 # -------------------------------------------------------------
-# MAIN ENTRYPOINT - CLEANUP APPLIED
+# MAIN ENTRYPOINT
 # -------------------------------------------------------------
 if __name__ == '__main__':
-    # You may want to set debug=False when deploying to Render/production
     app.run(host='0.0.0.0', port=5000, debug=True)
