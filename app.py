@@ -11,11 +11,13 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 app = Flask(__name__) 
 
 # Download VADER lexicon data and initialize globally
+# This ensures VADER is available on the server during the startup process.
 try:
-    # This check helps optimize deployment time
     nltk.data.find('sentiment/vader_lexicon.zip')
-except nltk.downloader.DownloadError:
-    nltk.download('vader_lexicon', quiet=True) 
+except LookupError:
+    # If the resource is not found, download it.
+    # The LookupError is the correct exception to catch here.
+    nltk.download('vader_lexicon', quiet=True)
 
 analyzer = SentimentIntensityAnalyzer()
 
