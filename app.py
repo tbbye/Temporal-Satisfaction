@@ -23,18 +23,16 @@ POSITIVE_THRESHOLD = 0.2
 NEGATIVE_THRESHOLD = -0.2
 DEFAULT_REVIEW_CHUNK_SIZE = 20
 
-# --- THEMATIC KEYWORDS (Centralized for the API) - ALL NEW KEYWORDS ADDED ---
+# --- THEMATIC KEYWORDS (Centralized for the API) - VALUE LIST REVISED FOR TIME RELATIONSHIP ---
 LENGTH_KEYWORDS = [
-    # Existing core terms (kept for reference)
+    # ... (Keep this list as previously updated)
     "hour", "hours", "length", "lengths", "lengthy", "short", "long", 
     "campaign", "time sink", "time investment", "time commitment",
-    # ADDED: Time units and duration synonyms (from previous fix)
     "second", "seconds", "minute", "minutes", "hourly", 
     "day", "days", "weekly", "month", "months", 
     "quarterly", "year", "years", "yearly", "annual",
     "session", "sessions", "playtime", "play time", "player time", 
     "limited time",
-    # NEW ADDITIONS: Game/play duration terms
     "runtime", "run time",
     "playthrough", "play-through",
     "game length", "story length",
@@ -42,38 +40,40 @@ LENGTH_KEYWORDS = [
     "hours in"
 ]
 GRIND_KEYWORDS = [
-    # Core grind terms
+    # ... (Keep this list as previously updated)
     "grind", "grindy", "farming", "farm", "repetitive", "repetition", 
     "burnout", "dailies", "daily", "chore", "time waste",
-    # NEW ADDITIONS: Tedium, time-wasting, time-gate
     "waste of time", "time waster", "time-waster",
     "time wasting", "time-wasting",
     "time-consuming", "time consuming",
     "busywork", "padding", "filler",
-    "tedious", "tedium", "tedius", # Including common typo
+    "tedious", "tedium", "tedius", 
     "grindfest", "grind fest", "mindless grind",
     "time gate", "time gated", "time-gated",
     "timegate", "timegated"
 ]
 VALUE_KEYWORDS = [
-    # Core value terms
-    "worth it", "value for money", "money well spent", "replayable", 
-    "replayability", "too short for the price", "content updates", 
-    "longevity", "shelf life", "price",
+    # Time-Relational Value (Keeps all keywords explicitly linking worth/content to time)
+    "worth it", "value for money", "money well spent", 
+    "replayable", "replayability", "content updates", 
+    "longevity", "shelf life", 
     "lifespan", "life span", "roadmap", "road map", "season", "seasons", "seasonal",
-    # NEW ADDITIONS: Respect for time/Value comparison terms
+
+    # Explicit Time/Price Conjunctions
+    "too short for the price", 
     "worth the time", "not worth the time",
     "time well spent",
     "good use of time",
     "waste of time and money",
     "hours of content", "hours of gameplay",
-    "bang for the buck", "get your money's worth",
     "per hour", "per-hour",
+
+    # Respect for Player Time (Implicit Value)
     "respect my time", "respects my time", "respect your time", "respects your time",
     "respect the player's time", "respect the players' time", "respects the player's time",
     "respecting my time", "respecting your time",
     "waste my time", "wastes my time", "waste your time", "wastes your time",
-    "total waste of time", "complete waste of time",
+    "waste of time", "total waste of time", "complete waste of time",
 ]
 
 # Compile patterns for fast searching
@@ -89,7 +89,7 @@ ALL_PATTERNS = {
 }
 
 # --- CACHE SETUP (Temporary in-memory cache) ---
-TEMP_REVIEW_CACHE = {} 
+TEMP_REVIEW_CACHE = {}
 CACHE_KEY_FORMAT = "{app_id}_{review_count}"
 
 
@@ -106,27 +106,28 @@ def get_review_sentiment(review_text):
     else:
         return 'Neutral'
 
+
 # --- HELPER FUNCTION: RUN SENTIMENT ANALYSIS ON A LIST OF REVIEWS ---
 def analyze_theme_reviews(review_list):
     positive_count = 0
     negative_count = 0
-    
+
     # Relies on the sentiment_label added during collection
     for review in review_list:
         if review.get('sentiment_label') == 'Positive':
             positive_count += 1
         elif review.get('sentiment_label') == 'Negative':
             negative_count += 1
-            
+
     total_analyzed = positive_count + negative_count
-    
+
     if total_analyzed > 0:
         positive_percent = (positive_count / total_analyzed) * 100
         negative_percent = (negative_count / total_analyzed) * 100
     else:
         positive_percent = 0.0
         negative_percent = 0.0
-        
+
     return {
         "positive_count": positive_count,
         "negative_count": negative_count,
@@ -135,27 +136,28 @@ def analyze_theme_reviews(review_list):
         "total_analyzed": total_analyzed
     }
 
+
 # --- HELPER FUNCTION: CALCULATE PLAYTIME DISTRIBUTION ---
 def calculate_playtime_distribution(all_reviews):
     playtimes = [r['playtime_hours'] for r in all_reviews if r['playtime_hours'] > 0]
-    
+
     if not playtimes:
         return {
             "median_hours": 0.0, "percentile_25th": 0.0, "percentile_75th": 0.0,
             "interpretation": "Not enough data with recorded playtime to analyze distribution.",
-            "histogram_buckets": [0.0] * 5 
+            "histogram_buckets": [0.0] * 5
         }
 
     arr = np.array(playtimes)
-    
+
     median = np.median(arr)
     p25 = np.percentile(arr, 25)
     p75 = np.percentile(arr, 75)
-    
+
     # Create Histogram Bins: e.g., 0-1h, 1-5h, 5-20h, 20-50h, 50+h (Adjust as needed)
-    bins = [0, 1, 5, 20, 50, arr.max() + 1] 
+    bins = [0, 1, 5, 20, 50, arr.max() + 1]
     hist, _ = np.histogram(arr, bins=bins)
-    
+
     # Interpretation Logic
     if p75 > 50 and median > 10:
         interp = "Players show high dedication, with the middle 50% spending over 10 hours."
@@ -174,7 +176,7 @@ def calculate_playtime_distribution(all_reviews):
 
 
 # -------------------------------------------------------------
-# API ENDPOINT 1: Steam Review Analysis (/analyze) - CRITICAL FIX APPLIED
+# API ENDPOINT 1: Steam Review Analysis (/analyze)
 # -------------------------------------------------------------
 @app.route('/analyze', methods=['POST'])
 def analyze_steam_reviews_api():
@@ -182,7 +184,7 @@ def analyze_steam_reviews_api():
     try:
         data = request.get_json()
         APP_ID = data.get('app_id')
-        review_count = data.get('review_count', 1000) 
+        review_count = data.get('review_count', 1000)
 
         if not APP_ID:
             return jsonify({"error": "Missing 'app_id' in request body."}), 400
@@ -195,7 +197,7 @@ def analyze_steam_reviews_api():
     max_pages_to_collect = MAX_REVIEWS_TO_COLLECT // 100
     if MAX_REVIEWS_TO_COLLECT % 100 != 0:
         max_pages_to_collect += 1
-    
+
     # --- Review Collection Loop ---
     all_reviews_raw = []
     API_URL = f"https://store.steampowered.com/appreviews/{APP_ID}"
@@ -223,14 +225,19 @@ def analyze_steam_reviews_api():
                 for review in reviews_on_page:
                     if len(all_reviews_raw) >= MAX_REVIEWS_TO_COLLECT:
                         break
-                        
+
+                    # 🔧 FIX: get playtime from the nested "author" object
+                    author = review.get('author', {}) or {}
+                    playtime_minutes = author.get('playtime_at_review',
+                                                  author.get('playtime_forever', 0))
+
+                    review_text = review.get('review', "")
+
                     review_data = {
-                        'review_text': review.get('review', ""),
-                        # CRITICAL FIX: Use 'playtime_at_review' for accurate review playtime
-                        'playtime_hours': round(review.get('playtime_at_review', 0) / 60, 1), 
-                        # Add sentiment label
-                        'sentiment_label': get_review_sentiment(review.get('review', "")),
-                        'theme_tags': [] # Placeholder for thematic tags
+                        'review_text': review_text,
+                        'playtime_hours': round(playtime_minutes / 60.0, 1),
+                        'sentiment_label': get_review_sentiment(review_text),
+                        'theme_tags': []
                     }
                     all_reviews_raw.append(review_data)
 
@@ -252,19 +259,19 @@ def analyze_steam_reviews_api():
         'value': []
     }
     all_themed_reviews = []
-    
+
     for review in all_reviews_raw:
         is_themed = False
-        
+
         # Check against each thematic pattern and tag the review
         for theme, pattern in ALL_PATTERNS.items():
             if pattern.search(review['review_text']):
                 review['theme_tags'].append(theme)
                 themed_reviews[theme].append(review)
                 is_themed = True
-        
+
         if is_themed:
-            all_themed_reviews.append(review) # Store the tagged review
+            all_themed_reviews.append(review)  # Store the tagged review
 
     # 4. Thematic Sentiment Analysis & Playtime Distribution
     length_analysis = analyze_theme_reviews(themed_reviews['length'])
@@ -282,7 +289,7 @@ def analyze_steam_reviews_api():
         "app_id": APP_ID,
         "review_count_used": review_count,
         "total_reviews_collected": len(all_reviews_raw),
-        
+
         "thematic_scores": {
             "length": {
                 "found": length_analysis['total_analyzed'],
@@ -300,10 +307,10 @@ def analyze_steam_reviews_api():
                 "negative_percent": value_analysis['negative_percent']
             }
         },
-        
+
         "playtime_distribution": playtime_distribution,
         "total_themed_reviews": len(all_themed_reviews),
-        
+
     }), 200
 
 
@@ -341,19 +348,26 @@ def search_game():
         for item in store_data.get('items', []):
             game_id = item.get('id') or item.get('appid')
             name = item.get('name')
-            header_image = item.get('header_image', '') 
-            
+
+            # 🔧 FIX: Build a usable header image URL
+            header_image = (
+                item.get('header_image')
+                or item.get('tiny_image')
+                or (f"https://shared.cloudflare.steamstatic.com/"
+                    f"store_item_assets/steam/apps/{game_id}/header.jpg")
+            )
+
             if game_id and name:
                 matches.append({
                     "appid": str(game_id),
                     "name": name,
                     "header_image_url": header_image,
                     "release_date": item.get('release_date', ''),
-                    "developer": "N/A", 
-                    "publisher": "N/A", 
+                    "developer": "N/A",
+                    "publisher": "N/A",
                 })
 
-        matches = matches[:10] # Limit results
+        matches = matches[:10]  # Limit results
         return jsonify({"results": matches}), 200
 
     except Exception as e:
@@ -375,7 +389,7 @@ def get_paginated_reviews():
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
 
     cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_count=total_count)
-    
+
     # 1. Check if the themed reviews list is in the cache (from the preceding /analyze call)
     themed_reviews_list = TEMP_REVIEW_CACHE.get(cache_key)
 
@@ -385,7 +399,7 @@ def get_paginated_reviews():
     # 2. Extract the relevant slice for pagination
     start_index = offset
     end_index = offset + limit
-    
+
     reviews_page = themed_reviews_list[start_index:end_index]
     total_available_themed = len(themed_reviews_list)
 
