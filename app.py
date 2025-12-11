@@ -148,7 +148,7 @@ def search_game():
         return jsonify({"results": []}), 200
 
     # We call the reliable Steam Store API directly for the search
-    SEARCH_API_URL = "https://store.steampowered.com/api/storesearch"
+    SEARCH_API_URL = "http://store.steampowered.com/api/storesearch"
     
     params = {
         'term': partial_name,
