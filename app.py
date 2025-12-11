@@ -1,26 +1,26 @@
-from flask import Flask, request, jsonify 
-import requests 
+from flask import Flask, request, jsonify
+import requests
 import time
-import json 
+import json
 import re
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
 # --- GLOBAL VARIABLES ---
 # This list is now DEPRECATED/EMPTY because we no longer try to cache the whole list.
-STEAM_APP_LIST = [] 
+STEAM_APP_LIST = []
 
 # Initialize Flask app
 app = Flask(__name__)
 
 # -------------------------------------
-# --- NEW FUNCTION: Load Steam App List ---
-# This function is now empty to bypass the slow and unreliable startup API call.
+# --- Load Steam App List (now a no-op) ---
 def load_steam_app_list():
+    # Intentionally empty – we no longer cache the full app list
     pass
 
-# Call the function when the server starts up 
-load_steam_app_list() 
+# Call the function when the server starts up
+load_steam_app_list()
 # -------------------------------------
 
 
@@ -55,25 +55,28 @@ keyword_pattern = re.compile('|'.join(re.escape(k) for k in TIME_KEYWORDS), re.I
 # -------------------------------------------------------------
 @app.route('/analyze', methods=['POST'])
 def analyze_steam_reviews_api():
-    
     # 1. Get the App ID from the request
     try:
         data = request.get_json()
         APP_ID = data.get('app_id')
 
         if not APP_ID:
-            return jsonify({"error": "Missing 'app_id' in request body. Please provide a Steam App ID."}), 400
+            return jsonify(
+                {"error": "Missing 'app_id' in request body. Please provide a Steam App ID."}
+            ), 400
 
     except Exception as e:
         return jsonify({"error": f"Error parsing request: {e}"}), 400
 
-    
-    # --- STEPS 1-3: Your Core Logic ---
+    # --- STEPS 1–3: Core Logic ---
     all_reviews_text = []
     API_URL = f"https://store.steampowered.com/appreviews/{APP_ID}"
     params = {
-        'json': 1, 'language': 'english', 'filter': 'recent',
-        'num_per_page': 100, 'cursor': '*'
+        'json': 1,
+        'language': 'english',
+        'filter': 'recent',
+        'num_per_page': 100,
+        'cursor': '*'
     }
 
     # Review Collection Loop
@@ -86,15 +89,18 @@ def analyze_steam_reviews_api():
                 data = response.json()
                 if data.get('success') == 1:
                     reviews_on_page = data.get('reviews', [])
-                    if not reviews_on_page: break
+                    if not reviews_on_page:
+                        break
 
                     for review in reviews_on_page:
-                        all_reviews_text.append(review['review'])
+                        all_reviews_text.append(review.get('review', ""))
 
                     params['cursor'] = data.get('cursor', None)
-                    time.sleep(0.5) 
-                else: break
-            else: break
+                    time.sleep(0.5)
+                else:
+                    break
+            else:
+                break
         except Exception:
             break
 
@@ -111,12 +117,12 @@ def analyze_steam_reviews_api():
     for review in time_centric_reviews:
         vs = analyzer.polarity_scores(review)
         compound_score = vs['compound']
-        
+
         if compound_score >= POSITIVE_THRESHOLD:
             positive_time_count += 1
         elif compound_score <= NEGATIVE_THRESHOLD:
             negative_time_count += 1
-            
+
     total_analyzed = positive_time_count + negative_time_count
 
     if total_analyzed > 0:
@@ -136,51 +142,65 @@ def analyze_steam_reviews_api():
         "negative_sentiment_percent": round(negative_percent, 2)
     })
 
+
 # -------------------------------------------------------------
-# API ENDPOINT 2: Game Name Search (/search) - FINAL, DEFENSIVE LOGIC
+# API ENDPOINT 2: Game Name Search (/search)
 # -------------------------------------------------------------
 @app.route('/search', methods=['POST'])
 def search_game():
-    data = request.get_json()
-    partial_name = data.get('name', '')
-    
+    # Parse the incoming JSON
+    try:
+        data = request.get_json(force=True) or {}
+    except Exception as e:
+        return jsonify({"error": f"Error parsing JSON body: {e}"}), 400
+
+    partial_name = data.get('name', '').strip()
+
+    # Empty name → empty list, not an error
     if not partial_name:
         return jsonify({"results": []}), 200
 
-    # We call the reliable Steam Store API directly for the search
-    # Using HTTP to help with Render's firewall/proxy issues
-    SEARCH_API_URL = "http://store.steampowered.com/api/storesearch"
-    
-    # Simplified search parameters for better reliability
+    # Use the Steam Store Search API
+    SEARCH_API_URL = "https://store.steampowered.com/api/storesearch/"
+
     params = {
-        'term': partial_name,    # The search term (e.g., "portal")
-        'l': 'english',          # Keep language filter
-        'cc': 'us',              # Keep country code
-        'request': 1,            # Required parameter
-        'page': 1                # Always request the first page
-        # Removed strict filters like category1 and excluded_tags
+        'term': partial_name,  # e.g. "portal"
+        'l': 'en',             # language
+        'cc': 'US',            # country code
+        'page': 1              # first page of results
     }
 
     try:
         response = requests.get(SEARCH_API_URL, params=params, timeout=10)
-        response.raise_for_status() 
-        
-        data = response.json()
-        
+        response.raise_for_status()
+
+        store_data = response.json()
+
         matches = []
-        for item in data.get('items', []):
-            # CRITICAL FIX: Check for 'appid' and 'name' keys before accessing them
-            if 'appid' in item and 'name' in item:
+        for item in store_data.get('items', []):
+            # Steam storesearch generally returns 'id', not 'appid'
+            game_id = item.get('id') or item.get('appid')
+            name = item.get('name')
+
+            if game_id and name:
                 matches.append({
-                    "appid": str(item['appid']),
-                    "name": item['name']
+                    "appid": str(game_id),
+                    "name": name
                 })
-            
+
         # Limit results to 10
         matches = matches[:10]
-        
+
         return jsonify({"results": matches}), 200
-        
+
     except Exception as e:
         print(f"Error during Steam search API call: {e}")
         return jsonify({"error": "Failed to connect to Steam Search API."}), 500
+
+
+# -------------------------------------------------------------
+# MAIN ENTRYPOINT (for local testing)
+# -------------------------------------------------------------
+if __name__ == '__main__':
+    # debug=True for development – turn off in production
+    app.run(host='0.0.0.0', port=5000, debug=True)
