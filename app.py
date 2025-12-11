@@ -243,8 +243,8 @@ def analyze_steam_reviews_api():
                     all_reviews_raw.append(review_data)
 
                 params['cursor'] = data.get('cursor', None)
-                # FIX: Increased sleep time to 1.0 seconds to mitigate API rate-limiting/server load
-                time.sleep(1.0) 
+                # Reduced delay to keep things responsive but still polite to Steam
+                time.sleep(0.15) 
             else:
                 break
         except requests.RequestException as e:
