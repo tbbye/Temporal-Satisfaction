@@ -46,4 +46,4 @@ analyzer = SentimentIntensityAnalyzer()
 # --- CONFIGURATION (Settings) ---
 MAX_PAGES = 10
 POSITIVE_THRESHOLD = 0.2
-NEGATIVE_THRESHOLD = -
+NEGATIVE_THRESHOLD = -0.2
