@@ -148,17 +148,17 @@ def search_game():
         return jsonify({"results": []}), 200
 
     # We call the reliable Steam Store API directly for the search
+    # Using HTTP to help with Render's firewall/proxy issues
     SEARCH_API_URL = "http://store.steampowered.com/api/storesearch"
     
+    # Simplified search parameters for better reliability
     params = {
-        'term': partial_name,
-        'l': 'english',
-        'cc': 'us',
-        'request': 1,
-        'query': partial_name,
-        'category1': '998', # Filter for Games
-        'page': 1,
-        'excluded_tags': '21,39,40' # Exclude Early Access, VR, and Software tags
+        'term': partial_name,    # The search term (e.g., "portal")
+        'l': 'english',          # Keep language filter
+        'cc': 'us',              # Keep country code
+        'request': 1,            # Required parameter
+        'page': 1                # Always request the first page
+        # Removed strict filters like category1 and excluded_tags
     }
 
     try:
@@ -167,16 +167,14 @@ def search_game():
         
         data = response.json()
         
-        # Format the results into the clean list structure your Flutter app expects
         matches = []
         for item in data.get('items', []):
-            # *** CRITICAL FIX: Check for 'appid' and 'name' keys before accessing them ***
+            # CRITICAL FIX: Check for 'appid' and 'name' keys before accessing them
             if 'appid' in item and 'name' in item:
                 matches.append({
                     "appid": str(item['appid']),
                     "name": item['name']
                 })
-            # ---------------------------
             
         # Limit results to 10
         matches = matches[:10]
