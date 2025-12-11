@@ -2,3 +2,4 @@ requests
 nltk
 Flask
 gunicorn
+numpy
