@@ -70,6 +70,8 @@ keyword_pattern = re.compile('|'.join(re.escape(k) for k in TIME_KEYWORDS), re.I
 # THE API ENDPOINT FUNCTION (Your original function)
 # -------------------------------------------------------------
 
-# This decorator creates the API URL: /analyze, and specifies it only accepts POST requests
+
+
+# app.py (Line 75)
 @app.route('/analyze', methods=['POST'])
-def analyze
+def analyze_steam_reviews_api(): # <-- NOTE THE PARENTHESES AND COLON
