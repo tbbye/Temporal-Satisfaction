@@ -51,7 +51,7 @@ keyword_pattern = re.compile('|'.join(re.escape(k) for k in TIME_KEYWORDS), re.I
 
 
 # -------------------------------------------------------------
-# API ENDPOINT 1: Steam Review Analysis (/analyze) - UNCHANGED
+# API ENDPOINT 1: Steam Review Analysis (/analyze)
 # -------------------------------------------------------------
 @app.route('/analyze', methods=['POST'])
 def analyze_steam_reviews_api():
@@ -137,7 +137,7 @@ def analyze_steam_reviews_api():
     })
 
 # -------------------------------------------------------------
-# API ENDPOINT 2: Game Name Search (/search) - NEW LOGIC
+# API ENDPOINT 2: Game Name Search (/search) - FINAL, DEFENSIVE LOGIC
 # -------------------------------------------------------------
 @app.route('/search', methods=['POST'])
 def search_game():
@@ -170,10 +170,13 @@ def search_game():
         # Format the results into the clean list structure your Flutter app expects
         matches = []
         for item in data.get('items', []):
-            matches.append({
-                "appid": str(item['appid']),
-                "name": item['name']
-            })
+            # *** CRITICAL FIX: Check for 'appid' and 'name' keys before accessing them ***
+            if 'appid' in item and 'name' in item:
+                matches.append({
+                    "appid": str(item['appid']),
+                    "name": item['name']
+                })
+            # ---------------------------
             
         # Limit results to 10
         matches = matches[:10]
