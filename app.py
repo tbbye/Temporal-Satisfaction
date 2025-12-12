@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, Response
+from flask_cors import CORS # <--- NEW IMPORT
 import requests
 import time
 import json
@@ -10,6 +11,12 @@ import io  # For handling CSV in memory
 
 # --- GLOBAL INITIALIZATION ---
 app = Flask(__name__)
+# --- CORS CONFIGURATION (FIX FOR NETLIFY/BROWSER ACCESS) ---
+# This allows requests from ANY origin ('*'). 
+# For better security, replace '*' with your Netlify URL, e.g.,
+# CORS(app, origins=["https://your-netlify-site.netlify.app"])
+CORS(app) 
+# -----------------------------------------------------------
 
 # Download VADER lexicon data and initialize globally
 try:
