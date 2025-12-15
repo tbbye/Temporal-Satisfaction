@@ -415,42 +415,54 @@ def analyze_theme_reviews(review_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 def calculate_playtime_distribution(all_reviews: List[Dict[str, Any]]) -> Dict[str, Any]:
-    playtimes = [
-        float(r.get("playtime_hours", 0.0) or 0.0)
-        for r in all_reviews
-        if float(r.get("playtime_hours", 0.0) or 0.0) > 0
-    ]
+    # collect playtime hours safely
+    vals: List[float] = []
+    for r in (all_reviews or []):
+        try:
+            v = float(r.get("playtime_hours", 0) or 0)
+            if v >= 0:
+                vals.append(v)
+        except Exception:
+            continue
 
-    if not playtimes:
+    if not vals:
         return {
             "median_hours": 0.0,
             "percentile_25th": 0.0,
             "percentile_75th": 0.0,
-            "interpretation": "Not enough data with recorded playtime to analyse distribution.",
+            "interpretation": "Not enough playtime data to calculate distribution.",
             "histogram_buckets": [0] * 7,
             "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
         }
 
-    arr = np.array(playtimes)
+    arr = np.array(vals, dtype=float)
+    arr = arr[~np.isnan(arr)]
+    if arr.size == 0:
+        return {
+            "median_hours": 0.0,
+            "percentile_25th": 0.0,
+            "percentile_75th": 0.0,
+            "interpretation": "Not enough playtime data to calculate distribution.",
+            "histogram_buckets": [0] * 7,
+            "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
+        }
+
     median = float(np.median(arr))
     p25 = float(np.percentile(arr, 25))
     p75 = float(np.percentile(arr, 75))
 
-    bins = [0, 1, 5, 10, 20, 50, 100, float(arr.max()) + 1.0]
-    hist, _ = np.histogram(arr, bins=bins)
+    # IMPORTANT: last edge must always be > 100 to keep bins increasing
+    last_edge = max(100.0, float(np.max(arr))) + 1.0
 
-    if p75 > 50 and median > 10:
-        interp = "Players show high dedication, with the middle 50% spending over 10 hours."
-    elif p75 > 10 and median < 5:
-        interp = "Highly variable experience; many play briefly, but a significant core invests substantial time."
-    else:
-        interp = "The majority of players spend moderate time in the game."
+    # bins: <1, 1–5, 5–10, 10–20, 20–50, 50–100, 100+
+    bins = [0, 1, 5, 10, 20, 50, 100, last_edge]
+    hist, _ = np.histogram(arr, bins=bins)
 
     return {
         "median_hours": round(median, 2),
         "percentile_25th": round(p25, 2),
         "percentile_75th": round(p75, 2),
-        "interpretation": interp,
+        "interpretation": "Distribution based on total playtime hours from the collected reviews.",
         "histogram_buckets": [int(x) for x in hist.tolist()],
         "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
     }
@@ -620,7 +632,19 @@ def analyze_steam_reviews_api() -> Response:
     grind_analysis = analyze_theme_reviews(themed_by["grind"])
     value_analysis = analyze_theme_reviews(themed_by["value"])
 
+    try:
     playtime_distribution = calculate_playtime_distribution(reviews_used)
+except Exception as e:
+    print(f"[playtime] Error: {e}")
+    playtime_distribution = {
+        "median_hours": 0.0,
+        "percentile_25th": 0.0,
+        "percentile_75th": 0.0,
+        "interpretation": "Playtime distribution could not be calculated.",
+        "histogram_buckets": [0] * 7,
+        "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
+    }
+
 
     appdetails = fetch_steam_appdetails(app_id) or {
         "developer": "N/A",
