@@ -41,7 +41,7 @@ DEFAULT_REVIEW_CHUNK_SIZE = 20
 CACHE_TTL_SECONDS = 30 * 60  # 30 minutes
 CACHE_MAX_ITEMS = 50         # keep last 50 analyses
 
-# NEW: App details cache (developer/publisher/header image)
+# App details cache (developer/publisher/header image/release date)
 APPDETAILS_TTL_SECONDS = 24 * 60 * 60  # 24 hours
 APPDETAILS_CACHE = {}  # { "appid": {"created_at": ts, "data": {...}} }
 
@@ -75,7 +75,6 @@ GRIND_KEYWORDS = [
 
 VALUE_KEYWORDS = [
     # Time-Relational Value
-    
     "replayable", "replayability", "content updates",
     "longevity", "shelf life",
     "lifespan", "life span", "roadmap", "road map", "season", "seasons", "seasonal",
@@ -148,7 +147,6 @@ def _purge_cache():
         for i in range(to_remove):
             TEMP_REVIEW_CACHE.pop(items[i][0], None)
 
-# NEW: Appdetails cache purge (optional light cleanup)
 def _purge_appdetails_cache():
     now = time.time()
     expired = []
@@ -159,9 +157,18 @@ def _purge_appdetails_cache():
     for appid in expired:
         APPDETAILS_CACHE.pop(appid, None)
 
-# NEW: Fetch developer/publisher/header_image via Steam appdetails
+# Fetch developer/publisher/header_image/release_date via Steam appdetails
 def fetch_steam_appdetails(app_id: str):
-    """Returns dict: {developer, publisher, header_image_url} or None."""
+    """
+    Returns dict:
+      {
+        developer: str,
+        publisher: str,
+        header_image_url: str,
+        release_date: str
+      }
+    or None.
+    """
     if not app_id:
         return None
 
@@ -192,11 +199,19 @@ def fetch_steam_appdetails(app_id: str):
         developers = data.get("developers") or []
         publishers = data.get("publishers") or []
 
+        # NEW: release date (Steam returns dict like {"coming_soon": False, "date": "15 Nov, 2021"})
+        release_node = data.get("release_date") or {}
+        release_date_str = ""
+        if isinstance(release_node, dict):
+            release_date_str = release_node.get("date") or ""
+        else:
+            release_date_str = str(release_node)
+
         details = {
             "developer": developers[0] if developers else "N/A",
             "publisher": publishers[0] if publishers else "N/A",
-            # This is the full header image URL Steam provides
             "header_image_url": data.get("header_image") or "",
+            "release_date": release_date_str,  # <- NEW
         }
 
         APPDETAILS_CACHE[str(app_id)] = {
@@ -216,7 +231,6 @@ def extract_time_sentiment_text(review_text: str) -> str:
     try:
         sentences = nltk.sent_tokenize(review_text)
     except Exception:
-        # Fallback: if tokeniser fails for any reason
         sentences = [review_text]
 
     matched = []
@@ -277,7 +291,7 @@ def calculate_playtime_distribution(all_reviews):
             "median_hours": 0.0,
             "percentile_25th": 0.0,
             "percentile_75th": 0.0,
-            "interpretation": "Not enough data with recorded playtime to analyze distribution.",
+            "interpretation": "Not enough data with recorded playtime to analyse distribution.",
             "histogram_buckets": [0.0] * 7
         }
 
@@ -321,7 +335,6 @@ def analyze_steam_reviews_api():
     except Exception as e:
         return jsonify({"error": f"Error parsing request: {e}"}), 400
 
-    # Clean cache occasionally
     _purge_cache()
 
     max_reviews_to_collect = review_count
@@ -371,7 +384,6 @@ def analyze_steam_reviews_api():
                 review_data = {
                     "review_text": review_text,
                     "playtime_hours": round(playtime_minutes / 60.0, 1),
-                    # sentiment on matched sentence(s)
                     "sentiment_label": get_review_sentiment_for_time_context(review_text),
                     "theme_tags": [],
                 }
@@ -381,7 +393,7 @@ def analyze_steam_reviews_api():
             if not params["cursor"]:
                 break
 
-            time.sleep(0.15)
+            time.sleep(0.1)
 
         except requests.RequestException as e:
             print(f"API Request Error while fetching reviews: {e}")
@@ -390,7 +402,7 @@ def analyze_steam_reviews_api():
             print(f"Unexpected Error during collection: {e}")
             break
 
-    # 3. Filtering and Thematic Tagging
+    # Filtering and Thematic Tagging
     themed_reviews = {"length": [], "grind": [], "value": []}
     all_themed_reviews = []
 
@@ -404,7 +416,7 @@ def analyze_steam_reviews_api():
         if is_themed:
             all_themed_reviews.append(review)
 
-    # 4. Theme sentiment analysis + playtime distribution
+    # Theme sentiment analysis + playtime distribution
     length_analysis = analyze_theme_reviews(themed_reviews["length"])
     grind_analysis = analyze_theme_reviews(themed_reviews["grind"])
     value_analysis = analyze_theme_reviews(themed_reviews["value"])
@@ -431,7 +443,7 @@ def analyze_steam_reviews_api():
     return jsonify({
         "status": "success",
         "app_id": app_id,
-        "review_count_used": review_count,  # requested count (cache key consistency)
+        "review_count_used": review_count,
         "total_reviews_collected": len(all_reviews_raw),
 
         "thematic_scores": {
@@ -470,7 +482,6 @@ def search_game():
     if not partial_name:
         return jsonify({"results": []}), 200
 
-    # Optional: clean appdetails cache occasionally
     _purge_appdetails_cache()
 
     search_api_url = "https://store.steampowered.com/api/storesearch/"
@@ -501,17 +512,20 @@ def search_game():
 
             developer = "N/A"
             publisher = "N/A"
+            release_date = ""  # <- NEW
 
-            # NEW: Try to fetch developer/publisher and a proper full header image
+            # Fetch developer/publisher/header image/release date from appdetails
             if game_id:
                 details = fetch_steam_appdetails(str(game_id))
                 if details:
                     developer = details.get("developer") or "N/A"
                     publisher = details.get("publisher") or "N/A"
-                    # Prefer appdetails header image if present
+
                     header_from_details = details.get("header_image_url") or ""
                     if header_from_details:
                         header_image = header_from_details
+
+                    release_date = details.get("release_date") or ""  # <- NEW
 
                 # small delay to avoid hammering Steam if you get many items
                 time.sleep(0.05)
@@ -521,7 +535,7 @@ def search_game():
                     "appid": str(game_id),
                     "name": name,
                     "header_image_url": header_image,
-                    "release_date": item.get("release_date", ""),
+                    "release_date": release_date,  # <- NEW (reliable now)
                     "developer": developer,
                     "publisher": publisher,
                 })
@@ -619,7 +633,6 @@ def export_reviews_csv():
         headers={
             "Content-Disposition": f'attachment; filename="{file_name}"',
             "Cache-Control": "no-cache",
-            # helps browsers access the filename header in CORS contexts
             "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )
