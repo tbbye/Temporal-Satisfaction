@@ -385,7 +385,7 @@ def _steam_get_with_retry(url: str, params: Dict[str, Any]) -> Optional[Dict[str
 
 def _safe_total_reviews_from_payload(payload: Dict[str, Any]) -> Optional[int]:
     """
-    Steam review payload usually includes query_summary.total_reviews
+    Steam review payload usually includes query_summary.total_reviews.
     We use that to support games with fewer than requested reviews.
     """
     try:
@@ -393,7 +393,8 @@ def _safe_total_reviews_from_payload(payload: Dict[str, Any]) -> Optional[int]:
         tr = qs.get("total_reviews", None)
         if tr is None:
             return None
-        tr_i = int(tr)
+        # Ensure it's treated as an integer and is not negative
+        tr_i = _safe_int(tr, -1)
         if tr_i < 0:
             return None
         return tr_i
@@ -458,8 +459,10 @@ def analyze_steam_reviews_api() -> Response:
     # Determine the effective target for this request.
     steam_total = entry.get("steam_total_reviews", None)
     if isinstance(steam_total, int) and steam_total >= 0:
+        # If we know the Steam total, the target is the minimum of requested and available
         target_count = _clamp(min(review_count_req, steam_total), MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
     else:
+        # If we don't know the Steam total yet, assume the requested amount (until first fetch)
         target_count = review_count_req
     entry["effective_target_count"] = target_count
 
@@ -504,9 +507,16 @@ def analyze_steam_reviews_api() -> Response:
                 total_reviews = _safe_total_reviews_from_payload(payload)
                 if total_reviews is not None:
                     entry["steam_total_reviews"] = total_reviews
+                    
+                    # Update target count based on actual Steam total
                     target_count = _clamp(min(review_count_req, total_reviews), MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
                     entry["effective_target_count"] = target_count
-                    # If we already have enough cached (rare but possible), we can stop early.
+                    
+                    # Recalculate pages needed if the target shrunk
+                    need = max(0, target_count - len(all_reviews))
+                    pages_needed = (need // STEAM_REVIEWS_PER_PAGE) + (1 if need % STEAM_REVIEWS_PER_PAGE else 0)
+
+                    # If we already have enough cached, we can stop early.
                     if len(all_reviews) >= target_count:
                         break
 
@@ -541,12 +551,14 @@ def analyze_steam_reviews_api() -> Response:
 
             time.sleep(REQUEST_SLEEP_SECONDS)
 
+        # update cache entry cursor and timestamp after append
         entry["cursor"] = cursor
         entry["created_at"] = _now()
         entry["all_reviews"] = all_reviews
 
     # Use only the first N requested (but N is now effective target if Steam has fewer)
-    used_count = min(entry.get("effective_target_count", review_count_req) or review_count_req, len(all_reviews))
+    effective_target = entry.get("effective_target_count", review_count_req)
+    used_count = min(effective_target, len(all_reviews))
     reviews_used = all_reviews[:used_count]
 
     themed_used = [r for r in reviews_used if (r.get("theme_tags") or [])]
@@ -570,11 +582,11 @@ def analyze_steam_reviews_api() -> Response:
     }
 
     steam_total = entry.get("steam_total_reviews", None)
-    effective_target = entry.get("effective_target_count", review_count_req)
-
+    
     note = None
     if isinstance(steam_total, int) and steam_total >= 0 and steam_total < review_count_req:
         note = f"Steam reports only {steam_total} total reviews for this game with the selected filter/language, so analysis uses {effective_target}."
+
 
     return jsonify(
         {
@@ -584,8 +596,8 @@ def analyze_steam_reviews_api() -> Response:
             "language": language,
 
             "review_count_requested": review_count_req,
-            "steam_total_reviews": steam_total,  # NEW: helps UI understand small-review games
-            "review_count_used": used_count,      # the effective count actually used
+            "steam_total_reviews": steam_total, # NEW: helps UI understand small-review games
+            "review_count_used": used_count,     # the effective count actually used
 
             "note": note,
 
@@ -746,12 +758,15 @@ def get_paginated_reviews() -> Response:
     if not isinstance(all_reviews, list):
         all_reviews = []
 
+    # NEW: Get the effective target from the cache, which accounts for small review counts
     effective_target = _safe_int(cached.get("effective_target_count", 1000), 1000)
     effective_target = _clamp(effective_target, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
     if total_count_raw is None:
+        # If frontend didn't specify a total count, use the cached effective target
         total_count = effective_target
     else:
+        # If frontend specified a total count, use it, clamped by the effective target
         total_count = _safe_int(total_count_raw, effective_target)
         total_count = _clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
@@ -808,6 +823,7 @@ def export_reviews_csv() -> Response:
     if not isinstance(all_reviews, list):
         all_reviews = []
 
+    # NEW: Get the effective target from the cache
     effective_target = _safe_int(cached.get("effective_target_count", 1000), 1000)
     effective_target = _clamp(effective_target, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
