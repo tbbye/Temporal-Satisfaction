@@ -48,9 +48,8 @@ APPDETAILS_CACHE = {}  # { "appid": {"created_at": ts, "data": {...}} }
 # --- THEMATIC KEYWORDS ---
 LENGTH_KEYWORDS = [
     "hour", "hours", "length", "lengths", "lengthy", "short", "long",
-    "campaign", "time sink", "time investment", "time commitment",
-    "second", "seconds", "minute", "minutes", "hourly",
-    "day", "days", "weekly", "month", "months",
+    "time sink", "time investment", "time commitment", "seconds", "minute", "minutes", "hourly",
+    "per day", "days", "weekly", "month", "months",
     "quarterly", "year", "years", "yearly", "annual",
     "session", "sessions", "playtime", "play time", "player time",
     "limited time",
@@ -62,7 +61,7 @@ LENGTH_KEYWORDS = [
 ]
 
 GRIND_KEYWORDS = [
-    "grind", "grindy", "farming", "farm", "repetitive", "repetition",
+    "grind", "grindy", "farming", "repetitive", "repetition",
     "burnout", "dailies", "daily", "chore", "time waste",
     "waste of time", "time waster", "time-waster",
     "time wasting", "time-wasting",
@@ -76,7 +75,7 @@ GRIND_KEYWORDS = [
 
 VALUE_KEYWORDS = [
     # Time-Relational Value
-    "worth it", "value for money", "money well spent",
+    
     "replayable", "replayability", "content updates",
     "longevity", "shelf life",
     "lifespan", "life span", "roadmap", "road map", "season", "seasons", "seasonal",
