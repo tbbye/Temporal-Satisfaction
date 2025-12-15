@@ -219,7 +219,7 @@ def fetch_steam_appdetails(app_id: str) -> Optional[Dict[str, str]]:
     params = {"appids": str(app_id), "l": "en", "cc": "US"}
 
     try:
-        resp = requests.get(url, params=params, timeout=30)
+        resp = requests.get(url, params=params, timeout=60)
         resp.raise_for_status()
         payload = resp.json()
 
@@ -620,7 +620,7 @@ def search_game() -> Response:
     params = {"term": partial_name, "l": "en", "cc": "US", "page": 1}
 
     try:
-        response = requests.get(search_api_url, params=params, timeout=30)
+        response = requests.get(search_api_url, params=params, timeout=60)
         response.raise_for_status()
         store_data = response.json()
 
