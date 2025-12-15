@@ -41,6 +41,10 @@ DEFAULT_REVIEW_CHUNK_SIZE = 20
 CACHE_TTL_SECONDS = 30 * 60  # 30 minutes
 CACHE_MAX_ITEMS = 50         # keep last 50 analyses
 
+# NEW: App details cache (developer/publisher/header image)
+APPDETAILS_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+APPDETAILS_CACHE = {}  # { "appid": {"created_at": ts, "data": {...}} }
+
 # --- THEMATIC KEYWORDS ---
 LENGTH_KEYWORDS = [
     "hour", "hours", "length", "lengths", "lengthy", "short", "long",
@@ -144,6 +148,67 @@ def _purge_cache():
         to_remove = len(TEMP_REVIEW_CACHE) - CACHE_MAX_ITEMS
         for i in range(to_remove):
             TEMP_REVIEW_CACHE.pop(items[i][0], None)
+
+# NEW: Appdetails cache purge (optional light cleanup)
+def _purge_appdetails_cache():
+    now = time.time()
+    expired = []
+    for appid, item in APPDETAILS_CACHE.items():
+        created_at = item.get("created_at", 0)
+        if (now - created_at) > APPDETAILS_TTL_SECONDS:
+            expired.append(appid)
+    for appid in expired:
+        APPDETAILS_CACHE.pop(appid, None)
+
+# NEW: Fetch developer/publisher/header_image via Steam appdetails
+def fetch_steam_appdetails(app_id: str):
+    """Returns dict: {developer, publisher, header_image_url} or None."""
+    if not app_id:
+        return None
+
+    cached = APPDETAILS_CACHE.get(str(app_id))
+    if isinstance(cached, dict):
+        created_at = cached.get("created_at", 0)
+        if (time.time() - created_at) <= APPDETAILS_TTL_SECONDS:
+            return cached.get("data")
+
+    url = "https://store.steampowered.com/api/appdetails"
+    params = {
+        "appids": str(app_id),
+        "l": "en",
+        "cc": "US",
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=10)
+        resp.raise_for_status()
+        payload = resp.json()
+
+        node = payload.get(str(app_id), {}) or {}
+        if not node.get("success"):
+            return None
+
+        data = node.get("data", {}) or {}
+
+        developers = data.get("developers") or []
+        publishers = data.get("publishers") or []
+
+        details = {
+            "developer": developers[0] if developers else "N/A",
+            "publisher": publishers[0] if publishers else "N/A",
+            # This is the full header image URL Steam provides
+            "header_image_url": data.get("header_image") or "",
+        }
+
+        APPDETAILS_CACHE[str(app_id)] = {
+            "created_at": time.time(),
+            "data": details,
+        }
+        return details
+
+    except Exception as e:
+        print(f"Error fetching appdetails for {app_id}: {e}")
+        return None
 
 # --- SENTIMENT (time-context only) ---
 def extract_time_sentiment_text(review_text: str) -> str:
@@ -406,6 +471,9 @@ def search_game():
     if not partial_name:
         return jsonify({"results": []}), 200
 
+    # Optional: clean appdetails cache occasionally
+    _purge_appdetails_cache()
+
     search_api_url = "https://store.steampowered.com/api/storesearch/"
     params = {
         "term": partial_name,
@@ -424,6 +492,7 @@ def search_game():
             game_id = item.get("id") or item.get("appid")
             name = item.get("name")
 
+            # Default (fallback) image
             header_image = (
                 item.get("header_image")
                 or item.get("tiny_image")
@@ -431,14 +500,31 @@ def search_game():
                     f"store_item_assets/steam/apps/{game_id}/header.jpg")
             )
 
+            developer = "N/A"
+            publisher = "N/A"
+
+            # NEW: Try to fetch developer/publisher and a proper full header image
+            if game_id:
+                details = fetch_steam_appdetails(str(game_id))
+                if details:
+                    developer = details.get("developer") or "N/A"
+                    publisher = details.get("publisher") or "N/A"
+                    # Prefer appdetails header image if present
+                    header_from_details = details.get("header_image_url") or ""
+                    if header_from_details:
+                        header_image = header_from_details
+
+                # small delay to avoid hammering Steam if you get many items
+                time.sleep(0.05)
+
             if game_id and name:
                 matches.append({
                     "appid": str(game_id),
                     "name": name,
                     "header_image_url": header_image,
                     "release_date": item.get("release_date", ""),
-                    "developer": "N/A",
-                    "publisher": "N/A",
+                    "developer": developer,
+                    "publisher": publisher,
                 })
 
         return jsonify({"results": matches[:10]}), 200
