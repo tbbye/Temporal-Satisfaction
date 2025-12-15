@@ -19,10 +19,6 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 # APP SETUP
 # =============================================================
 app = Flask(__name__)
-
-# CORS
-# For better security, replace '*' with your frontend URL(s), for example:
-# CORS(app, origins=["https://your-netlify-site.netlify.app"])
 CORS(app)
 
 # =============================================================
@@ -34,9 +30,7 @@ def _ensure_nltk_resource(path: str, download_name: str) -> None:
     except LookupError:
         nltk.download(download_name, quiet=True)
 
-# VADER lexicon
 _ensure_nltk_resource("sentiment/vader_lexicon.zip", "vader_lexicon")
-# Punkt tokenizer (sentence splitting)
 _ensure_nltk_resource("tokenizers/punkt", "punkt")
 
 analyzer = SentimentIntensityAnalyzer()
@@ -50,21 +44,20 @@ NEGATIVE_THRESHOLD = -0.2
 DEFAULT_REVIEW_CHUNK_SIZE = 20
 STEAM_REVIEWS_PER_PAGE = 100
 
-# Review collection pacing (avoid hammering Steam)
-REQUEST_SLEEP_SECONDS = 0.5
+REQUEST_SLEEP_SECONDS = 0.6  # a touch safer than 0.5 on shared IPs
 APPDETAILS_ITEM_SLEEP_SECONDS = 0.05
 
-# Cache behaviour (in-memory, best effort)
-CACHE_TTL_SECONDS = 30 * 60       # 30 minutes
-CACHE_MAX_ITEMS = 50             # keep last 50 analyses
+CACHE_TTL_SECONDS = 30 * 60
+CACHE_MAX_ITEMS = 50
 
-# Appdetails cache
-APPDETAILS_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+APPDETAILS_TTL_SECONDS = 24 * 60 * 60
 APPDETAILS_CACHE: Dict[str, Dict[str, Any]] = {}
 
-# Hard caps (helps avoid timeouts / abuse)
 MAX_REVIEW_COUNT = 5000
 MIN_REVIEW_COUNT = 1
+
+STEAM_TIMEOUT_SECONDS = 60
+STEAM_RETRY_MAX = 4
 
 # =============================================================
 # THEMATIC KEYWORDS
@@ -98,12 +91,9 @@ GRIND_KEYWORDS = [
 ]
 
 VALUE_KEYWORDS = [
-    # Time-relational value
     "replayable", "replayability", "content updates",
     "longevity", "shelf life",
     "lifespan", "life span", "roadmap", "road map", "season", "seasons", "seasonal",
-
-    # Explicit time/price conjunctions
     "too short for the price",
     "worth the time", "not worth the time",
     "time well spent",
@@ -111,8 +101,6 @@ VALUE_KEYWORDS = [
     "waste of time and money",
     "hours of content", "hours of gameplay",
     "per hour", "per-hour",
-
-    # Respect for player time (implicit value)
     "respect my time", "respects my time", "respect your time", "respects your time",
     "respect the player's time", "respect the players' time", "respects the player's time",
     "respecting my time", "respecting your time",
@@ -130,13 +118,10 @@ def compile_keyword_pattern(keywords: List[str]) -> re.Pattern:
         if not k:
             continue
         if " " in k or "-" in k:
-            # Phrase match
             parts.append(re.escape(k))
         else:
-            # Single token word boundary match
             parts.append(r"\b" + re.escape(k) + r"\b")
     if not parts:
-        # Match nothing
         return re.compile(r"(?!x)x")
     return re.compile("|".join(parts), re.IGNORECASE)
 
@@ -153,16 +138,26 @@ ALL_PATTERNS: Dict[str, re.Pattern] = {
 # =============================================================
 # CACHES
 # =============================================================
+# IMPORTANT CHANGE:
+# Cache key no longer includes review_count, so we can append progressively.
 TEMP_REVIEW_CACHE: Dict[str, Dict[str, Any]] = {}
-CACHE_KEY_FORMAT = "{app_id}_{review_count}_{review_filter}_{language}"
+CACHE_KEY_FORMAT = "{app_id}_{review_filter}_{language}"
 
 def _now() -> float:
     return time.time()
 
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def _clamp(n: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, n))
+
 def _purge_cache() -> None:
     now = _now()
 
-    # Expire old entries
     expired_keys: List[str] = []
     for k, v in TEMP_REVIEW_CACHE.items():
         created_at = float(v.get("created_at", 0) or 0)
@@ -171,7 +166,6 @@ def _purge_cache() -> None:
     for k in expired_keys:
         TEMP_REVIEW_CACHE.pop(k, None)
 
-    # Enforce max size (remove oldest)
     if len(TEMP_REVIEW_CACHE) > CACHE_MAX_ITEMS:
         items = list(TEMP_REVIEW_CACHE.items())
         items.sort(key=lambda kv: float(kv[1].get("created_at", 0) or 0))
@@ -193,16 +187,6 @@ def _purge_appdetails_cache() -> None:
 # STEAM HELPERS
 # =============================================================
 def fetch_steam_appdetails(app_id: str) -> Optional[Dict[str, str]]:
-    """
-    Returns dict:
-      {
-        developer: str,
-        publisher: str,
-        header_image_url: str,
-        release_date: str
-      }
-    or None
-    """
     if not app_id:
         return None
 
@@ -219,7 +203,7 @@ def fetch_steam_appdetails(app_id: str) -> Optional[Dict[str, str]]:
     params = {"appids": str(app_id), "l": "en", "cc": "US"}
 
     try:
-        resp = requests.get(url, params=params, timeout=60)
+        resp = requests.get(url, params=params, timeout=STEAM_TIMEOUT_SECONDS)
         resp.raise_for_status()
         payload = resp.json()
 
@@ -232,7 +216,6 @@ def fetch_steam_appdetails(app_id: str) -> Optional[Dict[str, str]]:
         publishers = data.get("publishers") or []
 
         release_node = data.get("release_date") or {}
-        release_date_str = ""
         if isinstance(release_node, dict):
             release_date_str = release_node.get("date") or ""
         else:
@@ -252,22 +235,15 @@ def fetch_steam_appdetails(app_id: str) -> Optional[Dict[str, str]]:
         print(f"[appdetails] Error for {app_id}: {e}")
         return None
 
-def _safe_int(value: Any, default: int) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return default
+def _tag_themes(review_text: str) -> List[str]:
+    tags: List[str] = []
+    t = review_text or ""
+    for theme, pattern in ALL_PATTERNS.items():
+        if pattern.search(t):
+            tags.append(theme)
+    return tags
 
-def _clamp(n: int, lo: int, hi: int) -> int:
-    return max(lo, min(hi, n))
-
-# =============================================================
-# SENTIMENT (time-context only)
-# =============================================================
 def extract_time_sentiment_text(review_text: str) -> str:
-    """Return only the sentence(s) that match any time-related theme pattern.
-    If nothing matches, fall back to full review text.
-    """
     review_text = review_text or ""
     if not review_text.strip():
         return ""
@@ -287,7 +263,6 @@ def extract_time_sentiment_text(review_text: str) -> str:
     return " ".join(matched).strip() if matched else review_text
 
 def get_review_sentiment_for_time_context(review_text: str) -> Tuple[str, float]:
-    """Returns (label, compound_score)."""
     text = extract_time_sentiment_text(review_text)
     vs = analyzer.polarity_scores(text)
     compound = float(vs.get("compound", 0.0) or 0.0)
@@ -298,9 +273,6 @@ def get_review_sentiment_for_time_context(review_text: str) -> Tuple[str, float]
         return "Negative", compound
     return "Neutral", compound
 
-# =============================================================
-# ANALYSIS HELPERS
-# =============================================================
 def analyze_theme_reviews(review_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     pos = 0
     neg = 0
@@ -316,7 +288,7 @@ def analyze_theme_reviews(review_list: List[Dict[str, Any]]) -> Dict[str, Any]:
             neu += 1
 
     total = pos + neg + neu
-    pn_total = pos + neg  # used for percent split like your original
+    pn_total = pos + neg
 
     if pn_total > 0:
         pos_pct = (pos / pn_total) * 100
@@ -330,7 +302,6 @@ def analyze_theme_reviews(review_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         "negative_count": neg,
         "neutral_count": neu,
         "total_found": total,
-        "total_analyzed_for_percent": pn_total,
         "positive_percent": round(pos_pct, 2),
         "negative_percent": round(neg_pct, 2),
     }
@@ -357,7 +328,6 @@ def calculate_playtime_distribution(all_reviews: List[Dict[str, Any]]) -> Dict[s
     p25 = float(np.percentile(arr, 25))
     p75 = float(np.percentile(arr, 75))
 
-    # bins: <1, 1–5, 5–10, 10–20, 20–50, 50–100, 100+
     bins = [0, 1, 5, 10, 20, 50, 100, float(arr.max()) + 1.0]
     hist, _ = np.histogram(arr, bins=bins)
 
@@ -377,12 +347,33 @@ def calculate_playtime_distribution(all_reviews: List[Dict[str, Any]]) -> Dict[s
         "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
     }
 
-def _tag_themes(review_text: str) -> List[str]:
-    tags: List[str] = []
-    for theme, pattern in ALL_PATTERNS.items():
-        if pattern.search(review_text or ""):
-            tags.append(theme)
-    return tags
+def _steam_get_with_retry(url: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    backoff = 1.0
+    for attempt in range(1, STEAM_RETRY_MAX + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=STEAM_TIMEOUT_SECONDS)
+
+            # soft handling for Steam throttling / flakiness
+            if resp.status_code in (429, 503):
+                print(f"[steam] {resp.status_code} throttle, attempt {attempt}/{STEAM_RETRY_MAX}, sleeping {backoff}s")
+                time.sleep(backoff)
+                backoff = min(backoff * 2.0, 12.0)
+                continue
+
+            resp.raise_for_status()
+
+            try:
+                return resp.json()
+            except Exception as e:
+                print(f"[steam] JSON parse error: {e}")
+                return None
+
+        except requests.RequestException as e:
+            print(f"[steam] Request error attempt {attempt}/{STEAM_RETRY_MAX}: {e}")
+            time.sleep(backoff)
+            backoff = min(backoff * 2.0, 12.0)
+
+    return None
 
 # =============================================================
 # ROUTES
@@ -391,9 +382,6 @@ def _tag_themes(review_text: str) -> List[str]:
 def health() -> Response:
     return jsonify({"status": "ok"}), 200
 
-# -------------------------------------------------------------
-# API ENDPOINT 1: Steam Review Analysis (/analyze)
-# -------------------------------------------------------------
 @app.route("/analyze", methods=["POST"])
 def analyze_steam_reviews_api() -> Response:
     try:
@@ -405,65 +393,62 @@ def analyze_steam_reviews_api() -> Response:
     if not app_id:
         return jsonify({"error": "Missing 'app_id' in request body."}), 400
 
-    review_count = _safe_int(data.get("review_count", 1000), 1000)
-    review_count = _clamp(review_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
+    review_count_req = _safe_int(data.get("review_count", 1000), 1000)
+    review_count_req = _clamp(review_count_req, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
     review_filter = str((data.get("filter") or "recent")).strip().lower()
-    # Steam docs accept: recent, updated, all
     if review_filter not in {"recent", "updated", "all"}:
         review_filter = "recent"
 
-    language = str((data.get("language") or "english")).strip().lower()
-    if not language:
-        language = "english"
+    language = str((data.get("language") or "english")).strip().lower() or "english"
 
     _purge_cache()
 
-    cache_key = CACHE_KEY_FORMAT.format(
-        app_id=app_id,
-        review_count=review_count,
-        review_filter=review_filter,
-        language=language,
-    )
+    cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_filter=review_filter, language=language)
 
-    # Return cached result quickly if available and valid
-    cached = TEMP_REVIEW_CACHE.get(cache_key)
-    if isinstance(cached, dict):
-        created_at = float(cached.get("created_at", 0) or 0)
-        if (_now() - created_at) <= CACHE_TTL_SECONDS:
-            cached_payload = cached.get("payload")
-            if isinstance(cached_payload, dict):
-                cached_payload["cache"] = {"hit": True, "age_seconds": int(_now() - created_at)}
-                return jsonify(cached_payload), 200
+    # Fetch or init cache entry
+    entry = TEMP_REVIEW_CACHE.get(cache_key)
+    if isinstance(entry, dict):
+        created_at = float(entry.get("created_at", 0) or 0)
+        if (_now() - created_at) > CACHE_TTL_SECONDS:
+            entry = None
 
-    # Plan pages
-    max_pages = (review_count // STEAM_REVIEWS_PER_PAGE) + (1 if review_count % STEAM_REVIEWS_PER_PAGE else 0)
+    if not entry:
+        entry = {
+            "created_at": _now(),
+            "cursor": "*",
+            "all_reviews": [],  # we keep everything collected so far
+        }
+        TEMP_REVIEW_CACHE[cache_key] = entry
 
-    all_reviews_raw: List[Dict[str, Any]] = []
-    api_url = f"https://store.steampowered.com/appreviews/{app_id}"
+    all_reviews: List[Dict[str, Any]] = entry.get("all_reviews", [])
+    if not isinstance(all_reviews, list):
+        all_reviews = []
+        entry["all_reviews"] = all_reviews
 
-    params = {
-        "json": 1,
-        "language": language,
-        "filter": review_filter,
-        "num_per_page": STEAM_REVIEWS_PER_PAGE,
-        "cursor": "*",
-    }
+    cursor = entry.get("cursor", "*") or "*"
 
-    pages_fetched = 0
-    while params.get("cursor") and pages_fetched < max_pages and len(all_reviews_raw) < review_count:
-        pages_fetched += 1
-        try:
-            response = requests.get(api_url, params=params, timeout=60)
-            response.raise_for_status()
+    # Incremental append:
+    # only fetch the difference between requested and already cached
+    need = max(0, review_count_req - len(all_reviews))
+    if need > 0 and cursor:
+        pages_needed = (need // STEAM_REVIEWS_PER_PAGE) + (1 if need % STEAM_REVIEWS_PER_PAGE else 0)
 
-            try:
-                payload = response.json()
-            except ValueError as e:
-                print(f"[reviews] Non-JSON response, stopping: {e}")
-                break
+        api_url = f"https://store.steampowered.com/appreviews/{app_id}"
+        params = {
+            "json": 1,
+            "language": language,
+            "filter": review_filter,
+            "num_per_page": STEAM_REVIEWS_PER_PAGE,
+            "cursor": cursor,
+        }
 
-            if payload.get("success") != 1:
+        pages_fetched = 0
+        while pages_fetched < pages_needed and len(all_reviews) < review_count_req and params.get("cursor"):
+            pages_fetched += 1
+
+            payload = _steam_get_with_retry(api_url, params)
+            if not payload or payload.get("success") != 1:
                 break
 
             reviews_on_page = payload.get("reviews", []) or []
@@ -471,7 +456,7 @@ def analyze_steam_reviews_api() -> Response:
                 break
 
             for review in reviews_on_page:
-                if len(all_reviews_raw) >= review_count:
+                if len(all_reviews) >= review_count_req:
                     break
 
                 author = review.get("author", {}) or {}
@@ -481,7 +466,7 @@ def analyze_steam_reviews_api() -> Response:
                 sentiment_label, sentiment_compound = get_review_sentiment_for_time_context(review_text)
                 theme_tags = _tag_themes(review_text)
 
-                all_reviews_raw.append(
+                all_reviews.append(
                     {
                         "review_text": review_text,
                         "playtime_hours": round(float(playtime_minutes) / 60.0, 1),
@@ -492,45 +477,31 @@ def analyze_steam_reviews_api() -> Response:
                 )
 
             params["cursor"] = payload.get("cursor") or None
+            cursor = params["cursor"]
             time.sleep(REQUEST_SLEEP_SECONDS)
 
-        except requests.RequestException as e:
-            print(f"[reviews] Request error: {e}")
-            break
-        except Exception as e:
-            print(f"[reviews] Unexpected error: {e}")
-            break
+        # update cache entry cursor and timestamp after append
+        entry["cursor"] = cursor
+        entry["created_at"] = _now()
+        entry["all_reviews"] = all_reviews
 
-    # Build themed collections
-    themed_reviews: Dict[str, List[Dict[str, Any]]] = {"length": [], "grind": [], "value": []}
-    all_themed_reviews: List[Dict[str, Any]] = []
-    for r in all_reviews_raw:
-        if r.get("theme_tags"):
-            all_themed_reviews.append(r)
-            for t in r["theme_tags"]:
-                if t in themed_reviews:
-                    themed_reviews[t].append(r)
+    # Use only the first N requested for this run (important for your UI)
+    used_count = min(review_count_req, len(all_reviews))
+    reviews_used = all_reviews[:used_count]
 
-    # Theme summaries
-    length_analysis = analyze_theme_reviews(themed_reviews["length"])
-    grind_analysis = analyze_theme_reviews(themed_reviews["grind"])
-    value_analysis = analyze_theme_reviews(themed_reviews["value"])
+    themed_used = [r for r in reviews_used if (r.get("theme_tags") or [])]
+    themed_by = {"length": [], "grind": [], "value": []}
+    for r in themed_used:
+        for t in (r.get("theme_tags") or []):
+            if t in themed_by:
+                themed_by[t].append(r)
 
-    # Playtime distribution
-    try:
-        playtime_distribution = calculate_playtime_distribution(all_reviews_raw)
-    except Exception as e:
-        print(f"[playtime] Error: {e}")
-        playtime_distribution = {
-            "median_hours": 0.0,
-            "percentile_25th": 0.0,
-            "percentile_75th": 0.0,
-            "interpretation": "Playtime distribution could not be calculated.",
-            "histogram_buckets": [0] * 7,
-            "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
-        }
+    length_analysis = analyze_theme_reviews(themed_by["length"])
+    grind_analysis = analyze_theme_reviews(themed_by["grind"])
+    value_analysis = analyze_theme_reviews(themed_by["value"])
 
-    # Optional appdetails for convenience (does not block if Steam appdetails fails)
+    playtime_distribution = calculate_playtime_distribution(reviews_used)
+
     appdetails = fetch_steam_appdetails(app_id) or {
         "developer": "N/A",
         "publisher": "N/A",
@@ -538,71 +509,67 @@ def analyze_steam_reviews_api() -> Response:
         "release_date": "",
     }
 
-    payload_out: Dict[str, Any] = {
-        "status": "success",
-        "app_id": app_id,
-        "review_count_requested": review_count,
-        "review_count_used": review_count,
-        "review_filter": review_filter,
-        "language": language,
-        "total_reviews_collected": len(all_reviews_raw),
-        "total_themed_reviews": len(all_themed_reviews),
+    return jsonify(
+        {
+            "status": "success",
+            "app_id": app_id,
+            "review_filter": review_filter,
+            "language": language,
 
-        "appdetails": appdetails,
+            "review_count_requested": review_count_req,
+            "review_count_used": used_count,
 
-        "thematic_scores": {
-            "length": {
-                "found": length_analysis["total_found"],
-                "positive_percent": length_analysis["positive_percent"],
-                "negative_percent": length_analysis["negative_percent"],
-                "neutral_count": length_analysis["neutral_count"],
+            # for debugging what’s going on
+            "cache_progress": {
+                "cached_total_reviews": len(all_reviews),
+                "cursor_is_none": cursor is None,
+                "can_fetch_more": bool(cursor) and len(all_reviews) < MAX_REVIEW_COUNT,
             },
-            "grind": {
-                "found": grind_analysis["total_found"],
-                "positive_percent": grind_analysis["positive_percent"],
-                "negative_percent": grind_analysis["negative_percent"],
-                "neutral_count": grind_analysis["neutral_count"],
+
+            "total_reviews_collected": len(reviews_used),
+            "total_themed_reviews": len(themed_used),
+
+            "appdetails": appdetails,
+
+            "thematic_scores": {
+                "length": {
+                    "found": length_analysis["total_found"],
+                    "positive_percent": length_analysis["positive_percent"],
+                    "negative_percent": length_analysis["negative_percent"],
+                    "neutral_count": length_analysis["neutral_count"],
+                },
+                "grind": {
+                    "found": grind_analysis["total_found"],
+                    "positive_percent": grind_analysis["positive_percent"],
+                    "negative_percent": grind_analysis["negative_percent"],
+                    "neutral_count": grind_analysis["neutral_count"],
+                },
+                "value": {
+                    "found": value_analysis["total_found"],
+                    "positive_percent": value_analysis["positive_percent"],
+                    "negative_percent": value_analysis["negative_percent"],
+                    "neutral_count": value_analysis["neutral_count"],
+                },
             },
-            "value": {
-                "found": value_analysis["total_found"],
-                "positive_percent": value_analysis["positive_percent"],
-                "negative_percent": value_analysis["negative_percent"],
-                "neutral_count": value_analysis["neutral_count"],
+
+            "playtime_distribution": playtime_distribution,
+
+            "sentiment_method": {
+                "model": "NLTK VADER",
+                "scope": "Sentiment is computed on time-relevant sentences when possible; otherwise the full review is used.",
+                "thresholds": {
+                    "positive_compound_gte": POSITIVE_THRESHOLD,
+                    "negative_compound_lte": NEGATIVE_THRESHOLD,
+                },
+                "known_limitations": [
+                    "May misread sarcasm, memes, or mixed opinions.",
+                    "May not detect domain-specific meanings (e.g., grind as positive for some genres).",
+                    "Sentence extraction is keyword-based, so context can be missed.",
+                ],
             },
-        },
+        }
+    ), 200
 
-        "playtime_distribution": playtime_distribution,
-
-        # Transparent sentiment metadata + limitations (for your UI disclaimer)
-        "sentiment_method": {
-            "model": "NLTK VADER",
-            "scope": "Sentiment is computed on time-relevant sentences when possible; otherwise the full review is used.",
-            "thresholds": {
-                "positive_compound_gte": POSITIVE_THRESHOLD,
-                "negative_compound_lte": NEGATIVE_THRESHOLD,
-            },
-            "known_limitations": [
-                "May misread sarcasm, memes, or mixed opinions.",
-                "May not detect domain-specific meanings (e.g., grind as positive for some genres).",
-                "Sentence extraction is keyword-based, so context can be missed.",
-            ],
-        },
-
-        "cache": {"hit": False, "age_seconds": 0},
-    }
-
-    # Cache full payload + themed reviews for pagination/export
-    TEMP_REVIEW_CACHE[cache_key] = {
-        "created_at": _now(),
-        "payload": payload_out,
-        "reviews": all_themed_reviews,
-    }
-
-    return jsonify(payload_out), 200
-
-# -------------------------------------------------------------
-# API ENDPOINT 2: Game Name Search (/search)
-# -------------------------------------------------------------
 @app.route("/search", methods=["POST"])
 def search_game() -> Response:
     try:
@@ -620,7 +587,7 @@ def search_game() -> Response:
     params = {"term": partial_name, "l": "en", "cc": "US", "page": 1}
 
     try:
-        response = requests.get(search_api_url, params=params, timeout=60)
+        response = requests.get(search_api_url, params=params, timeout=STEAM_TIMEOUT_SECONDS)
         response.raise_for_status()
         store_data = response.json()
 
@@ -628,11 +595,9 @@ def search_game() -> Response:
         for item in (store_data.get("items", []) or []):
             game_id = item.get("id") or item.get("appid")
             name = item.get("name")
-
             if not game_id or not name:
                 continue
 
-            # Fallback image
             header_image = (
                 item.get("header_image")
                 or item.get("tiny_image")
@@ -674,9 +639,6 @@ def search_game() -> Response:
         print(f"[search] Error: {e}")
         return jsonify({"error": "Failed to connect to Steam Search API."}), 500
 
-# -------------------------------------------------------------
-# API ENDPOINT 3: Paginated Review Fetching (/reviews)
-# -------------------------------------------------------------
 @app.route("/reviews", methods=["GET"])
 def get_paginated_reviews() -> Response:
     app_id = str((request.args.get("app_id") or "")).strip()
@@ -688,23 +650,18 @@ def get_paginated_reviews() -> Response:
     if review_filter not in {"recent", "updated", "all"}:
         review_filter = "recent"
 
-    language = str((request.args.get("language") or "english")).strip().lower()
-    if not language:
-        language = "english"
+    language = str((request.args.get("language") or "english")).strip().lower() or "english"
 
     if not app_id:
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
 
     limit = _clamp(limit, 1, 200)
     offset = max(0, offset)
+    total_count = _clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
-    cache_key = CACHE_KEY_FORMAT.format(
-        app_id=app_id,
-        review_count=_clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT),
-        review_filter=review_filter,
-        language=language,
-    )
+    _purge_cache()
 
+    cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_filter=review_filter, language=language)
     cached = TEMP_REVIEW_CACHE.get(cache_key)
     if cached is None:
         return jsonify({"error": "Analysis data not found. Please run /analyze first."}), 404
@@ -714,26 +671,26 @@ def get_paginated_reviews() -> Response:
         TEMP_REVIEW_CACHE.pop(cache_key, None)
         return jsonify({"error": "Analysis cache expired. Please run /analyze again."}), 404
 
-    themed_reviews_list = cached.get("reviews", [])
-    if not isinstance(themed_reviews_list, list):
-        themed_reviews_list = []
+    all_reviews = cached.get("all_reviews", [])
+    if not isinstance(all_reviews, list):
+        all_reviews = []
+
+    reviews_used = all_reviews[: min(total_count, len(all_reviews))]
+    themed = [r for r in reviews_used if (r.get("theme_tags") or [])]
 
     start_index = offset
     end_index = offset + limit
-    reviews_page = themed_reviews_list[start_index:end_index]
+    page = themed[start_index:end_index]
 
     return jsonify(
         {
-            "reviews": reviews_page,
-            "total_available": len(themed_reviews_list),
+            "reviews": page,
+            "total_available": len(themed),
             "offset": offset,
             "limit": limit,
         }
     ), 200
 
-# -------------------------------------------------------------
-# API ENDPOINT 4: Export Reviews to CSV (/export)
-# -------------------------------------------------------------
 @app.route("/export", methods=["GET"])
 def export_reviews_csv() -> Response:
     app_id = str((request.args.get("app_id") or "")).strip()
@@ -743,20 +700,16 @@ def export_reviews_csv() -> Response:
     if review_filter not in {"recent", "updated", "all"}:
         review_filter = "recent"
 
-    language = str((request.args.get("language") or "english")).strip().lower()
-    if not language:
-        language = "english"
+    language = str((request.args.get("language") or "english")).strip().lower() or "english"
 
     if not app_id:
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
 
-    cache_key = CACHE_KEY_FORMAT.format(
-        app_id=app_id,
-        review_count=_clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT),
-        review_filter=review_filter,
-        language=language,
-    )
+    total_count = _clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
+    _purge_cache()
+
+    cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_filter=review_filter, language=language)
     cached = TEMP_REVIEW_CACHE.get(cache_key)
     if cached is None:
         return jsonify({"error": "Review data not found in cache. Please run /analyze first."}), 404
@@ -766,25 +719,28 @@ def export_reviews_csv() -> Response:
         TEMP_REVIEW_CACHE.pop(cache_key, None)
         return jsonify({"error": "Analysis cache expired. Please run /analyze again."}), 404
 
-    all_themed_reviews = cached.get("reviews", [])
-    if not isinstance(all_themed_reviews, list):
-        all_themed_reviews = []
+    all_reviews = cached.get("all_reviews", [])
+    if not isinstance(all_reviews, list):
+        all_reviews = []
+
+    reviews_used = all_reviews[: min(total_count, len(all_reviews))]
+    themed = [r for r in reviews_used if (r.get("theme_tags") or [])]
 
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Sentiment Label", "Sentiment Compound", "Playtime (Hours)", "Theme Tags", "Review Text"])
 
-    for review in all_themed_reviews:
-        sentiment = review.get("sentiment_label", "Neutral")
-        compound = review.get("sentiment_compound", 0.0)
-        playtime = review.get("playtime_hours", 0.0)
-        tags = "|".join(review.get("theme_tags", []) or [])
-        text = (review.get("review_text", "") or "").replace("\n", " ").strip()
+    for r in themed:
+        sentiment = r.get("sentiment_label", "Neutral")
+        compound = r.get("sentiment_compound", 0.0)
+        playtime = r.get("playtime_hours", 0.0)
+        tags = "|".join(r.get("theme_tags", []) or [])
+        text = (r.get("review_text", "") or "").replace("\n", " ").strip()
         writer.writerow([sentiment, compound, playtime, tags, text])
 
     output.seek(0)
-
     file_name = f"steam_reviews_{app_id}_{total_count}_{review_filter}_{language}_themed.csv"
+
     return Response(
         output.getvalue(),
         mimetype="text/csv; charset=utf-8",
@@ -795,9 +751,6 @@ def export_reviews_csv() -> Response:
         },
     )
 
-# =============================================================
-# MAIN ENTRYPOINT
-# =============================================================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "5000"))
     debug = os.getenv("FLASK_DEBUG", "1") == "1"
