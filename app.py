@@ -44,7 +44,7 @@ NEGATIVE_THRESHOLD = -0.2
 DEFAULT_REVIEW_CHUNK_SIZE = 20
 STEAM_REVIEWS_PER_PAGE = 100
 
-REQUEST_SLEEP_SECONDS = 0.6  # a touch safer than 0.5 on shared IPs
+REQUEST_SLEEP_SECONDS = 0.6
 APPDETAILS_ITEM_SLEEP_SECONDS = 0.05
 
 CACHE_TTL_SECONDS = 30 * 60
@@ -54,7 +54,7 @@ APPDETAILS_TTL_SECONDS = 24 * 60 * 60
 APPDETAILS_CACHE: Dict[str, Dict[str, Any]] = {}
 
 MAX_REVIEW_COUNT = 5000
-MIN_REVIEW_COUNT = 1  # keep at 1 so we can still "discover totals" even if user asks for 0
+MIN_REVIEW_COUNT = 1
 
 STEAM_TIMEOUT_SECONDS = 60
 STEAM_RETRY_MAX = 4
@@ -125,22 +125,20 @@ def compile_keyword_pattern(keywords: List[str]) -> re.Pattern:
         return re.compile(r"(?!x)x")
     return re.compile("|".join(parts), re.IGNORECASE)
 
-length_pattern = compile_keyword_pattern(LENGTH_KEYWORDS)
-grind_pattern = compile_keyword_pattern(GRIND_KEYWORDS)
-value_pattern = compile_keyword_pattern(VALUE_KEYWORDS)
-
 ALL_PATTERNS: Dict[str, re.Pattern] = {
-    "length": length_pattern,
-    "grind": grind_pattern,
-    "value": value_pattern,
+    "length": compile_keyword_pattern(LENGTH_KEYWORDS),
+    "grind": compile_keyword_pattern(GRIND_KEYWORDS),
+    "value": compile_keyword_pattern(VALUE_KEYWORDS),
 }
 
 # =============================================================
 # CACHES
 # =============================================================
-# Cache key does not include review_count, so we can append progressively.
 TEMP_REVIEW_CACHE: Dict[str, Dict[str, Any]] = {}
-CACHE_KEY_FORMAT = "{app_id}_{review_filter}_{language}"
+
+# IMPORTANT: support BOTH cache key formats (old + new)
+CACHE_KEY_V1 = "{app_id}_{review_count}_{review_filter}_{language}"   # old
+CACHE_KEY_V2 = "{app_id}_{review_filter}_{language}"                 # new
 
 def _now() -> float:
     return time.time()
@@ -156,13 +154,12 @@ def _clamp(n: int, lo: int, hi: int) -> int:
 
 def _purge_cache() -> None:
     now = _now()
-
-    expired_keys: List[str] = []
+    expired: List[str] = []
     for k, v in TEMP_REVIEW_CACHE.items():
         created_at = float(v.get("created_at", 0) or 0)
         if (now - created_at) > CACHE_TTL_SECONDS:
-            expired_keys.append(k)
-    for k in expired_keys:
+            expired.append(k)
+    for k in expired:
         TEMP_REVIEW_CACHE.pop(k, None)
 
     if len(TEMP_REVIEW_CACHE) > CACHE_MAX_ITEMS:
@@ -182,14 +179,7 @@ def _purge_appdetails_cache() -> None:
     for appid in expired:
         APPDETAILS_CACHE.pop(appid, None)
 
-# =============================================================
-# STEAM HELPERS
-# =============================================================
 def _cursor_ok(c: Any) -> bool:
-    """
-    Steam reviews API uses cursor == "0" to indicate no more pages.
-    Treat empty / None / "0" as terminal.
-    """
     if c is None:
         return False
     s = str(c).strip()
@@ -205,6 +195,66 @@ def _truthy_flag(v: Any, default: bool = True) -> bool:
         return True
     return default
 
+def _make_keys(app_id: str, review_filter: str, language: str, review_count: Optional[int]) -> Tuple[str, Optional[str]]:
+    """
+    Returns (v2_key, v1_key_or_none).
+    """
+    k2 = CACHE_KEY_V2.format(app_id=app_id, review_filter=review_filter, language=language)
+    k1 = None
+    if review_count is not None:
+        k1 = CACHE_KEY_V1.format(
+            app_id=app_id,
+            review_count=int(review_count),
+            review_filter=review_filter,
+            language=language,
+        )
+    return k2, k1
+
+def _get_cached_entry(
+    app_id: str,
+    review_filter: str,
+    language: str,
+    review_count_hint: Optional[int] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Try v2 key first, then v1 (old) key if present.
+    """
+    k2, k1 = _make_keys(app_id, review_filter, language, review_count_hint)
+    entry = TEMP_REVIEW_CACHE.get(k2)
+    if isinstance(entry, dict):
+        return entry
+    if k1:
+        entry = TEMP_REVIEW_CACHE.get(k1)
+        if isinstance(entry, dict):
+            return entry
+    return None
+
+def _store_entry_under_keys(
+    entry: Dict[str, Any],
+    app_id: str,
+    review_filter: str,
+    language: str,
+    requested_count: int,
+    effective_count: int
+) -> None:
+    """
+    Store the SAME entry under multiple keys so old /reviews and new /reviews both work.
+    """
+    k2, k1_req = _make_keys(app_id, review_filter, language, requested_count)
+    _,  k1_eff = _make_keys(app_id, review_filter, language, effective_count)
+
+    # always store v2
+    TEMP_REVIEW_CACHE[k2] = entry
+
+    # also store old v1 keys (requested + effective)
+    if k1_req:
+        TEMP_REVIEW_CACHE[k1_req] = entry
+    if k1_eff:
+        TEMP_REVIEW_CACHE[k1_eff] = entry
+
+# =============================================================
+# STEAM HELPERS
+# =============================================================
 def fetch_steam_appdetails(app_id: str) -> Optional[Dict[str, str]]:
     if not app_id:
         return None
@@ -252,6 +302,45 @@ def fetch_steam_appdetails(app_id: str) -> Optional[Dict[str, str]]:
 
     except Exception as e:
         print(f"[appdetails] Error for {app_id}: {e}")
+        return None
+
+def _steam_get_with_retry(url: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    backoff = 1.0
+    for attempt in range(1, STEAM_RETRY_MAX + 1):
+        try:
+            resp = requests.get(url, params=params, timeout=STEAM_TIMEOUT_SECONDS)
+
+            if resp.status_code in (429, 503):
+                print(f"[steam] {resp.status_code} throttle, attempt {attempt}/{STEAM_RETRY_MAX}, sleeping {backoff}s")
+                time.sleep(backoff)
+                backoff = min(backoff * 2.0, 12.0)
+                continue
+
+            resp.raise_for_status()
+            try:
+                return resp.json()
+            except Exception as e:
+                print(f"[steam] JSON parse error: {e}")
+                return None
+
+        except requests.RequestException as e:
+            print(f"[steam] Request error attempt {attempt}/{STEAM_RETRY_MAX}: {e}")
+            time.sleep(backoff)
+            backoff = min(backoff * 2.0, 12.0)
+
+    return None
+
+def _safe_total_reviews_from_payload(payload: Dict[str, Any]) -> Optional[int]:
+    try:
+        qs = payload.get("query_summary", {}) or {}
+        tr = qs.get("total_reviews", None)
+        if tr is None:
+            return None
+        tr_i = _safe_int(tr, -1)
+        if tr_i < 0:
+            return None
+        return tr_i
+    except Exception:
         return None
 
 def _tag_themes(review_text: str) -> List[str]:
@@ -366,66 +455,6 @@ def calculate_playtime_distribution(all_reviews: List[Dict[str, Any]]) -> Dict[s
         "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
     }
 
-def _steam_get_with_retry(url: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    backoff = 1.0
-    for attempt in range(1, STEAM_RETRY_MAX + 1):
-        try:
-            resp = requests.get(url, params=params, timeout=STEAM_TIMEOUT_SECONDS)
-
-            if resp.status_code in (429, 503):
-                print(f"[steam] {resp.status_code} throttle, attempt {attempt}/{STEAM_RETRY_MAX}, sleeping {backoff}s")
-                time.sleep(backoff)
-                backoff = min(backoff * 2.0, 12.0)
-                continue
-
-            resp.raise_for_status()
-
-            try:
-                return resp.json()
-            except Exception as e:
-                print(f"[steam] JSON parse error: {e}")
-                return None
-
-        except requests.RequestException as e:
-            print(f"[steam] Request error attempt {attempt}/{STEAM_RETRY_MAX}: {e}")
-            time.sleep(backoff)
-            backoff = min(backoff * 2.0, 12.0)
-
-    return None
-
-def _safe_total_reviews_from_payload(payload: Dict[str, Any]) -> Optional[int]:
-    """
-    Steam review payload usually includes query_summary.total_reviews.
-    """
-    try:
-        qs = payload.get("query_summary", {}) or {}
-        tr = qs.get("total_reviews", None)
-        if tr is None:
-            return None
-        tr_i = _safe_int(tr, -1)
-        if tr_i < 0:
-            return None
-        return tr_i
-    except Exception:
-        return None
-
-def _finalise_steam_total_if_missing(entry: Dict[str, Any], cursor: Any) -> None:
-    """
-    If Steam didn't give us query_summary.total_reviews, and we have reached the end
-    (cursor terminal), treat whatever we collected as the total available for this
-    filter/language.
-    """
-    if entry.get("steam_total_reviews", None) is not None:
-        return
-
-    all_reviews = entry.get("all_reviews", [])
-    if not isinstance(all_reviews, list):
-        all_reviews = []
-
-    # If cursor is terminal, we know we can't fetch more – so total == collected.
-    if not _cursor_ok(cursor):
-        entry["steam_total_reviews"] = len(all_reviews)
-
 # =============================================================
 # ROUTES
 # =============================================================
@@ -455,9 +484,8 @@ def analyze_steam_reviews_api() -> Response:
 
     _purge_cache()
 
-    cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_filter=review_filter, language=language)
-
-    entry = TEMP_REVIEW_CACHE.get(cache_key)
+    # Fetch existing entry (try both key styles)
+    entry = _get_cached_entry(app_id, review_filter, language, review_count_hint=review_count_req)
     if isinstance(entry, dict):
         created_at = float(entry.get("created_at", 0) or 0)
         if (_now() - created_at) > CACHE_TTL_SECONDS:
@@ -470,8 +498,10 @@ def analyze_steam_reviews_api() -> Response:
             "all_reviews": [],
             "steam_total_reviews": None,
             "effective_target_count": review_count_req,
+            # legacy storage expected by old /reviews + /export
+            "payload": None,
+            "reviews": [],
         }
-        TEMP_REVIEW_CACHE[cache_key] = entry
 
     all_reviews: List[Dict[str, Any]] = entry.get("all_reviews", [])
     if not isinstance(all_reviews, list):
@@ -480,6 +510,7 @@ def analyze_steam_reviews_api() -> Response:
 
     cursor = entry.get("cursor", "*") or "*"
 
+    # Determine effective target if we know total
     steam_total = entry.get("steam_total_reviews", None)
     if isinstance(steam_total, int) and steam_total >= 0:
         target_count = _clamp(min(review_count_req, steam_total), MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
@@ -526,18 +557,16 @@ def analyze_steam_reviews_api() -> Response:
                 total_reviews = _safe_total_reviews_from_payload(payload)
                 if total_reviews is not None:
                     entry["steam_total_reviews"] = total_reviews
-
                     target_count = _clamp(min(review_count_req, total_reviews), MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
                     entry["effective_target_count"] = target_count
 
                     need = max(0, target_count - len(all_reviews))
                     pages_needed = (need // STEAM_REVIEWS_PER_PAGE) + (1 if need % STEAM_REVIEWS_PER_PAGE else 0)
 
-                    if len(all_reviews) >= target_count:
-                        break
-
             reviews_on_page = payload.get("reviews", []) or []
             if not reviews_on_page:
+                # terminal condition even if cursor looks odd
+                params["cursor"] = None
                 break
 
             for review in reviews_on_page:
@@ -571,12 +600,14 @@ def analyze_steam_reviews_api() -> Response:
         entry["created_at"] = _now()
         entry["all_reviews"] = all_reviews
 
-    # IMPORTANT: if Steam didn't report totals, finalise them once we're terminal.
-    _finalise_steam_total_if_missing(entry, entry.get("cursor"))
+        # if Steam didn't give totals, but we're terminal, infer total from collected
+        if entry.get("steam_total_reviews", None) is None and not _cursor_ok(cursor):
+            entry["steam_total_reviews"] = len(all_reviews)
 
-    effective_target = entry.get("effective_target_count", review_count_req)
-    used_count = min(int(effective_target or 0), len(all_reviews))
-    reviews_used = all_reviews[:used_count]
+    # Actual analysed count
+    effective_target = _safe_int(entry.get("effective_target_count", review_count_req), review_count_req)
+    analysed_count = min(effective_target, len(all_reviews))
+    reviews_used = all_reviews[:analysed_count]
 
     themed_used = [r for r in reviews_used if (r.get("theme_tags") or [])]
     themed_by = {"length": [], "grind": [], "value": []}
@@ -602,81 +633,99 @@ def analyze_steam_reviews_api() -> Response:
 
     note = None
     if isinstance(steam_total, int) and steam_total >= 0 and steam_total < review_count_req:
-        note = f"Steam reports only {steam_total} total reviews for this game with the selected filter/language, so analysis uses {min(steam_total, review_count_req)}."
+        note = f"Steam reports only {steam_total} total reviews for this game with the selected filter/language."
 
-    no_reviews_collected = (len(reviews_used) == 0)
-    no_time_centric_reviews_found = (len(themed_used) == 0 and len(reviews_used) > 0)
+    if analysed_count == 0:
+        note = (note + " " if note else "") + "No reviews were returned by Steam for this filter/language."
+    elif len(themed_used) == 0:
+        note = (note + " " if note else "") + f"No time-centric keywords were found in the {analysed_count} reviews analysed."
 
-    if no_reviews_collected:
-        note = (note + " " if note else "") + "No reviews were collected for this filter/language (0 returned by Steam)."
-    elif no_time_centric_reviews_found:
-        note = (note + " " if note else "") + f"No time-centric keywords were found in the {len(reviews_used)} reviews analysed."
+    # IMPORTANT COMPATIBILITY:
+    # Many older frontends assume review_count_used == requested, even if fewer exist.
+    # So we include BOTH:
+    #   review_count_used -> requested (legacy)
+    #   review_count_analyzed -> actual analysed
+    payload_out: Dict[str, Any] = {
+        "status": "success",
+        "app_id": app_id,
+        "review_filter": review_filter,
+        "language": language,
 
-    return jsonify(
-        {
-            "status": "success",
-            "app_id": app_id,
-            "review_filter": review_filter,
-            "language": language,
+        "review_count_requested": review_count_req,
+        "review_count_used": review_count_req,          # legacy / UI compatibility
+        "review_count_analyzed": analysed_count,        # the truth you can display
+        "steam_total_reviews": steam_total,             # helps show "22 reviews total"
 
-            "review_count_requested": review_count_req,
-            "steam_total_reviews": steam_total,
-            "review_count_used": used_count,
+        "note": note,
 
-            "note": note,
-            "no_reviews_collected": no_reviews_collected,
-            "no_time_centric_reviews_found": no_time_centric_reviews_found,
+        "cache_progress": {
+            "cached_total_reviews": len(all_reviews),
+            "cursor_is_none": entry.get("cursor") is None,
+            "can_fetch_more": _cursor_ok(entry.get("cursor")) and len(all_reviews) < MAX_REVIEW_COUNT,
+            "effective_target_count": effective_target,
+        },
 
-            "cache_progress": {
-                "cached_total_reviews": len(all_reviews),
-                "cursor_is_none": entry.get("cursor") is None,
-                "can_fetch_more": _cursor_ok(entry.get("cursor")) and len(all_reviews) < MAX_REVIEW_COUNT,
-                "effective_target_count": effective_target,
+        "total_reviews_collected": analysed_count,
+        "total_themed_reviews": len(themed_used),
+
+        "appdetails": appdetails,
+
+        "thematic_scores": {
+            "length": {
+                "found": length_analysis["total_found"],
+                "positive_percent": length_analysis["positive_percent"],
+                "negative_percent": length_analysis["negative_percent"],
+                "neutral_count": length_analysis["neutral_count"],
             },
-
-            "total_reviews_collected": len(reviews_used),
-            "total_themed_reviews": len(themed_used),
-
-            "appdetails": appdetails,
-
-            "thematic_scores": {
-                "length": {
-                    "found": length_analysis["total_found"],
-                    "positive_percent": length_analysis["positive_percent"],
-                    "negative_percent": length_analysis["negative_percent"],
-                    "neutral_count": length_analysis["neutral_count"],
-                },
-                "grind": {
-                    "found": grind_analysis["total_found"],
-                    "positive_percent": grind_analysis["positive_percent"],
-                    "negative_percent": grind_analysis["negative_percent"],
-                    "neutral_count": grind_analysis["neutral_count"],
-                },
-                "value": {
-                    "found": value_analysis["total_found"],
-                    "positive_percent": value_analysis["positive_percent"],
-                    "negative_percent": value_analysis["negative_percent"],
-                    "neutral_count": value_analysis["neutral_count"],
-                },
+            "grind": {
+                "found": grind_analysis["total_found"],
+                "positive_percent": grind_analysis["positive_percent"],
+                "negative_percent": grind_analysis["negative_percent"],
+                "neutral_count": grind_analysis["neutral_count"],
             },
-
-            "playtime_distribution": playtime_distribution,
-
-            "sentiment_method": {
-                "model": "NLTK VADER",
-                "scope": "Sentiment is computed on time-relevant sentences when possible; otherwise the full review is used.",
-                "thresholds": {
-                    "positive_compound_gte": POSITIVE_THRESHOLD,
-                    "negative_compound_lte": NEGATIVE_THRESHOLD,
-                },
-                "known_limitations": [
-                    "May misread sarcasm, memes, or mixed opinions.",
-                    "May not detect domain-specific meanings (e.g., grind as positive for some genres).",
-                    "Sentence extraction is keyword-based, so context can be missed.",
-                ],
+            "value": {
+                "found": value_analysis["total_found"],
+                "positive_percent": value_analysis["positive_percent"],
+                "negative_percent": value_analysis["negative_percent"],
+                "neutral_count": value_analysis["neutral_count"],
             },
-        }
-    ), 200
+        },
+
+        "playtime_distribution": playtime_distribution,
+
+        "sentiment_method": {
+            "model": "NLTK VADER",
+            "scope": "Sentiment is computed on time-relevant sentences when possible; otherwise the full review is used.",
+            "thresholds": {
+                "positive_compound_gte": POSITIVE_THRESHOLD,
+                "negative_compound_lte": NEGATIVE_THRESHOLD,
+            },
+            "known_limitations": [
+                "May misread sarcasm, memes, or mixed opinions.",
+                "May not detect domain-specific meanings (e.g., grind as positive for some genres).",
+                "Sentence extraction is keyword-based, so context can be missed.",
+            ],
+        },
+    }
+
+    # Store legacy fields expected by your older /reviews + /export code paths
+    entry["payload"] = payload_out
+    entry["reviews"] = themed_used  # legacy: themed reviews list for paging/export
+    entry["created_at"] = _now()
+    entry["all_reviews"] = all_reviews
+    entry["effective_target_count"] = effective_target
+
+    # Store entry under BOTH key formats (requested + effective)
+    _store_entry_under_keys(
+        entry=entry,
+        app_id=app_id,
+        review_filter=review_filter,
+        language=language,
+        requested_count=review_count_req,
+        effective_count=analysed_count if analysed_count > 0 else review_count_req,
+    )
+
+    return jsonify(payload_out), 200
 
 @app.route("/search", methods=["POST"])
 def search_game() -> Response:
@@ -753,17 +802,18 @@ def get_paginated_reviews() -> Response:
     offset = _safe_int(request.args.get("offset", 0), 0)
     limit = _safe_int(request.args.get("limit", DEFAULT_REVIEW_CHUNK_SIZE), DEFAULT_REVIEW_CHUNK_SIZE)
 
-    total_count_raw = request.args.get("total_count", None)
-
     review_filter = str((request.args.get("filter") or "recent")).strip().lower()
     if review_filter not in {"recent", "updated", "all"}:
         review_filter = "recent"
 
     language = str((request.args.get("language") or "english")).strip().lower() or "english"
 
-    # NEW: preserve old behaviour, but *fallback* to all reviews when themed == 0.
+    total_count_raw = request.args.get("total_count", None)
+    total_count_hint = _safe_int(total_count_raw, 0) if total_count_raw is not None else None
+
+    # defaults: themed-only like old behaviour, but fallback so empty-themed games still show something
     themed_only = _truthy_flag(request.args.get("themed_only", "1"), default=True)
-    allow_fallback = _truthy_flag(request.args.get("fallback_to_all_if_none", "1"), default=True)
+    fallback_to_all_if_none = _truthy_flag(request.args.get("fallback_to_all_if_none", "1"), default=True)
 
     if not app_id:
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
@@ -773,14 +823,12 @@ def get_paginated_reviews() -> Response:
 
     _purge_cache()
 
-    cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_filter=review_filter, language=language)
-    cached = TEMP_REVIEW_CACHE.get(cache_key)
+    cached = _get_cached_entry(app_id, review_filter, language, review_count_hint=total_count_hint)
     if cached is None:
         return jsonify({"error": "Analysis data not found. Please run /analyze first."}), 404
 
     created_at = float(cached.get("created_at", 0) or 0)
     if (_now() - created_at) > CACHE_TTL_SECONDS:
-        TEMP_REVIEW_CACHE.pop(cache_key, None)
         return jsonify({"error": "Analysis cache expired. Please run /analyze again."}), 404
 
     all_reviews = cached.get("all_reviews", [])
@@ -790,22 +838,28 @@ def get_paginated_reviews() -> Response:
     effective_target = _safe_int(cached.get("effective_target_count", 1000), 1000)
     effective_target = _clamp(effective_target, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
-    if total_count_raw is None:
-        total_count = effective_target
+    if total_count_hint is None or total_count_hint <= 0:
+        total_count = min(effective_target, len(all_reviews))
     else:
-        total_count = _safe_int(total_count_raw, effective_target)
-        total_count = _clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
-
-    total_count = min(total_count, len(all_reviews))
+        total_count = _clamp(total_count_hint, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
+        total_count = min(total_count, len(all_reviews))
 
     reviews_used = all_reviews[:total_count]
+
+    # legacy themed list (preferred if present)
+    themed_legacy = cached.get("reviews", [])
+    if not isinstance(themed_legacy, list):
+        themed_legacy = []
+
+    # recompute themed from current used slice (correct for total_count)
     themed = [r for r in reviews_used if (r.get("theme_tags") or [])]
 
+    # Use themed list unless explicitly requesting all
     mode_returned = "themed" if themed_only else "all"
-
-    # KEY FIX: if themed_only but themed is empty, fallback to all reviews so UI still shows something.
     items = themed if themed_only else reviews_used
-    if themed_only and allow_fallback and len(themed) == 0:
+
+    # key behaviour: if themed is empty, optionally fallback to all
+    if themed_only and fallback_to_all_if_none and len(items) == 0 and len(reviews_used) > 0:
         items = reviews_used
         mode_returned = "all_fallback"
 
@@ -831,31 +885,29 @@ def get_paginated_reviews() -> Response:
 def export_reviews_csv() -> Response:
     app_id = str((request.args.get("app_id") or "")).strip()
 
-    total_count_raw = request.args.get("total_count", None)
-
     review_filter = str((request.args.get("filter") or "recent")).strip().lower()
     if review_filter not in {"recent", "updated", "all"}:
         review_filter = "recent"
 
     language = str((request.args.get("language") or "english")).strip().lower() or "english"
 
-    # NEW: matches /reviews behaviour
+    total_count_raw = request.args.get("total_count", None)
+    total_count_hint = _safe_int(total_count_raw, 0) if total_count_raw is not None else None
+
     themed_only = _truthy_flag(request.args.get("themed_only", "1"), default=True)
-    allow_fallback = _truthy_flag(request.args.get("fallback_to_all_if_none", "1"), default=True)
+    fallback_to_all_if_none = _truthy_flag(request.args.get("fallback_to_all_if_none", "1"), default=True)
 
     if not app_id:
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
 
     _purge_cache()
 
-    cache_key = CACHE_KEY_FORMAT.format(app_id=app_id, review_filter=review_filter, language=language)
-    cached = TEMP_REVIEW_CACHE.get(cache_key)
+    cached = _get_cached_entry(app_id, review_filter, language, review_count_hint=total_count_hint)
     if cached is None:
         return jsonify({"error": "Review data not found in cache. Please run /analyze first."}), 404
 
     created_at = float(cached.get("created_at", 0) or 0)
     if (_now() - created_at) > CACHE_TTL_SECONDS:
-        TEMP_REVIEW_CACHE.pop(cache_key, None)
         return jsonify({"error": "Analysis cache expired. Please run /analyze again."}), 404
 
     all_reviews = cached.get("all_reviews", [])
@@ -865,20 +917,18 @@ def export_reviews_csv() -> Response:
     effective_target = _safe_int(cached.get("effective_target_count", 1000), 1000)
     effective_target = _clamp(effective_target, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
-    if total_count_raw is None:
-        total_count = effective_target
+    if total_count_hint is None or total_count_hint <= 0:
+        total_count = min(effective_target, len(all_reviews))
     else:
-        total_count = _safe_int(total_count_raw, effective_target)
-        total_count = _clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
-
-    total_count = min(total_count, len(all_reviews))
+        total_count = _clamp(total_count_hint, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
+        total_count = min(total_count, len(all_reviews))
 
     reviews_used = all_reviews[:total_count]
     themed = [r for r in reviews_used if (r.get("theme_tags") or [])]
 
     rows = themed if themed_only else reviews_used
     mode_used = "themed" if themed_only else "all"
-    if themed_only and allow_fallback and len(themed) == 0:
+    if themed_only and fallback_to_all_if_none and len(rows) == 0 and len(reviews_used) > 0:
         rows = reviews_used
         mode_used = "all_fallback"
 
