@@ -186,6 +186,16 @@ def _purge_appdetails_cache() -> None:
 # =============================================================
 # STEAM HELPERS
 # =============================================================
+def _cursor_ok(c: Any) -> bool:
+    """
+    Steam reviews API uses cursor == "0" to indicate no more pages.
+    Treat empty / None / "0" as terminal.
+    """
+    if c is None:
+        return False
+    s = str(c).strip()
+    return s != "" and s != "0"
+
 def fetch_steam_appdetails(app_id: str) -> Optional[Dict[str, str]]:
     if not app_id:
         return None
@@ -431,7 +441,7 @@ def analyze_steam_reviews_api() -> Response:
     # Incremental append:
     # only fetch the difference between requested and already cached
     need = max(0, review_count_req - len(all_reviews))
-    if need > 0 and cursor:
+    if need > 0 and _cursor_ok(cursor):
         pages_needed = (need // STEAM_REVIEWS_PER_PAGE) + (1 if need % STEAM_REVIEWS_PER_PAGE else 0)
 
         api_url = f"https://store.steampowered.com/appreviews/{app_id}"
@@ -444,7 +454,19 @@ def analyze_steam_reviews_api() -> Response:
         }
 
         pages_fetched = 0
-        while pages_fetched < pages_needed and len(all_reviews) < review_count_req and params.get("cursor"):
+        seen_cursors = set()
+
+        while (
+            pages_fetched < pages_needed
+            and len(all_reviews) < review_count_req
+            and _cursor_ok(params.get("cursor"))
+        ):
+            # safety: break if Steam repeats cursors (prevents looping at end)
+            cur = str(params.get("cursor"))
+            if cur in seen_cursors:
+                break
+            seen_cursors.add(cur)
+
             pages_fetched += 1
 
             payload = _steam_get_with_retry(api_url, params)
@@ -476,8 +498,10 @@ def analyze_steam_reviews_api() -> Response:
                     }
                 )
 
-            params["cursor"] = payload.get("cursor") or None
+            new_cursor = payload.get("cursor")
+            params["cursor"] = new_cursor if _cursor_ok(new_cursor) else None
             cursor = params["cursor"]
+
             time.sleep(REQUEST_SLEEP_SECONDS)
 
         # update cache entry cursor and timestamp after append
@@ -523,7 +547,7 @@ def analyze_steam_reviews_api() -> Response:
             "cache_progress": {
                 "cached_total_reviews": len(all_reviews),
                 "cursor_is_none": cursor is None,
-                "can_fetch_more": bool(cursor) and len(all_reviews) < MAX_REVIEW_COUNT,
+                "can_fetch_more": _cursor_ok(cursor) and len(all_reviews) < MAX_REVIEW_COUNT,
             },
 
             "total_reviews_collected": len(reviews_used),
