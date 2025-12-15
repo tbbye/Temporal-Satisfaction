@@ -17,16 +17,11 @@ dependencies:
   # HTTP requests to your Flask backend
   http: ^1.6.0
 
-  # Directory utilities (you *can* use this later if needed)
-  path_provider: ^2.1.2
-
-  # Request storage permission on Android
-  permission_handler: ^11.3.1
-
-  # Save CSV files to disk
+  # Save CSV files to disk (Android/Desktop) + browser download support (Web)
   file_saver: ^0.2.14
 
-  url_launcher: ^6.3.1   # ← ADD THIS
+  # Open links (export URL on web, mailto links, Buy Me a Coffee)
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

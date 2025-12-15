@@ -8,8 +8,6 @@ import 'package:http/http.dart' as http;
 import '../models/game.dart';
 import '../models/analysis_result.dart';
 
-// If you’re on an Android emulator, you may need 10.0.2.2 instead of 127.0.0.1.
-// For a real device on the same Wi-Fi, keep your PC’s LAN IP / Flask host here.
 const String _baseUrl = 'https://temporal-satisfaction.onrender.com';
 
 class ReviewPageResult {
@@ -30,7 +28,11 @@ class ReviewPageResult {
 }
 
 class ApiService {
-  static const Duration _timeout = Duration(seconds: 60);
+  // General requests
+  static const Duration _timeoutDefault = Duration(seconds: 60);
+
+  // Analyze can legitimately take longer (Render cold start + Steam paging)
+  static const Duration _timeoutAnalyze = Duration(seconds: 240);
 
   // ---------------------------------------------------
   // 1. GAME SEARCH  ->  POST /search  { "name": query }
@@ -47,19 +49,16 @@ class ApiService {
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'name': trimmed}),
         )
-        .timeout(_timeout);
+        .timeout(_timeoutDefault);
 
     if (response.statusCode != 200) {
-      throw Exception(
-        'Search failed (${response.statusCode}): ${response.body}',
-      );
+      throw Exception('Search failed (${response.statusCode}): ${response.body}');
     }
 
     final Map<String, dynamic> data =
         jsonDecode(response.body) as Map<String, dynamic>;
 
     final List<dynamic> rawResults = data['results'] as List? ?? [];
-
     return rawResults
         .map((item) => Game.fromJson(item as Map<String, dynamic>))
         .toList();
@@ -67,10 +66,13 @@ class ApiService {
 
   // ---------------------------------------------------
   // 2. ANALYSE REVIEWS  ->  POST /analyze
+  //    Supports: review_count, filter, language
   // ---------------------------------------------------
   Future<AnalysisResult> analyzeReviews(
     String appId, {
     int reviewCount = 1000,
+    String filter = 'recent',   // recent | updated | all
+    String language = 'english',
   }) async {
     final uri = Uri.parse('$_baseUrl/analyze');
 
@@ -81,14 +83,14 @@ class ApiService {
           body: jsonEncode({
             'app_id': appId,
             'review_count': reviewCount,
+            'filter': filter,
+            'language': language,
           }),
         )
-        .timeout(_timeout);
+        .timeout(_timeoutAnalyze);
 
     if (response.statusCode != 200) {
-      throw Exception(
-        'Analyze failed (${response.statusCode}): ${response.body}',
-      );
+      throw Exception('Analyze failed (${response.statusCode}): ${response.body}');
     }
 
     final Map<String, dynamic> data =
@@ -99,32 +101,61 @@ class ApiService {
 
   // ---------------------------------------------------
   // 3. PAGINATED THEMED REVIEWS  ->  GET /reviews
+  //    Must match the same: total_count, filter, language
   // ---------------------------------------------------
   Future<ReviewPageResult> fetchPaginatedReviews(
     String appId, {
     required int offset,
     required int limit,
     required int totalCount,
+    String filter = 'recent',
+    String language = 'english',
   }) async {
-    final uri = Uri.parse(
-      '$_baseUrl/reviews'
-      '?app_id=$appId'
-      '&offset=$offset'
-      '&limit=$limit'
-      '&total_count=$totalCount',
+    final uri = Uri.parse('$_baseUrl/reviews').replace(
+      queryParameters: {
+        'app_id': appId,
+        'offset': offset.toString(),
+        'limit': limit.toString(),
+        'total_count': totalCount.toString(),
+        'filter': filter,
+        'language': language,
+      },
     );
 
-    final response = await http.get(uri).timeout(_timeout);
+    final response = await http.get(uri).timeout(_timeoutDefault);
 
     if (response.statusCode != 200) {
-      throw Exception(
-        'Reviews fetch failed (${response.statusCode}): ${response.body}',
-      );
+      throw Exception('Reviews fetch failed (${response.statusCode}): ${response.body}');
     }
 
     final Map<String, dynamic> data =
         jsonDecode(response.body) as Map<String, dynamic>;
 
     return ReviewPageResult.fromJson(data);
+  }
+
+  // (Optional but useful) 4. EXPORT CSV -> GET /export
+  Future<http.Response> exportCsv(
+    String appId, {
+    required int totalCount,
+    String filter = 'recent',
+    String language = 'english',
+  }) async {
+    final uri = Uri.parse('$_baseUrl/export').replace(
+      queryParameters: {
+        'app_id': appId,
+        'total_count': totalCount.toString(),
+        'filter': filter,
+        'language': language,
+      },
+    );
+
+    final response = await http.get(uri).timeout(_timeoutDefault);
+
+    if (response.statusCode != 200) {
+      throw Exception('Export failed (${response.statusCode}): ${response.body}');
+    }
+
+    return response; // caller can save bytes / trigger download
   }
 }
