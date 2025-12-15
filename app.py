@@ -186,7 +186,7 @@ def fetch_steam_appdetails(app_id: str):
     }
 
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        resp = requests.get(url, params=params, timeout=30)
         resp.raise_for_status()
         payload = resp.json()
 
@@ -356,7 +356,7 @@ def analyze_steam_reviews_api():
     while params["cursor"] and page_count < max_pages_to_collect:
         page_count += 1
         try:
-            response = requests.get(api_url, params=params, timeout=30)
+            response = requests.get(api_url, params=params, timeout=60)
             response.raise_for_status()
 
             try:
@@ -393,7 +393,7 @@ def analyze_steam_reviews_api():
             if not params["cursor"]:
                 break
 
-            time.sleep(0.1)
+            time.sleep(0.5)
 
         except requests.RequestException as e:
             print(f"API Request Error while fetching reviews: {e}")
@@ -493,7 +493,7 @@ def search_game():
     }
 
     try:
-        response = requests.get(search_api_url, params=params, timeout=10)
+        response = requests.get(search_api_url, params=params, timeout=30)
         response.raise_for_status()
         store_data = response.json()
 
