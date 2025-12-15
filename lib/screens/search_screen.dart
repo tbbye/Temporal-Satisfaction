@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/gestures.dart';
@@ -26,6 +27,9 @@ const String _githubUrl = 'https://github.com/tbbye/Temporal-Satisfaction';
 /// Keep section headers consistent
 const double kSectionTitleSize = 16;
 const FontWeight kSectionTitleWeight = FontWeight.w900;
+
+// Match AnalysisScreen web layout tuning
+const double kWebMaxWidth = 860;
 
 /// Featured game pool (name-only). We enrich by searching Steam for metadata.
 const List<String> kFeaturedGameNames = [
@@ -85,15 +89,12 @@ class _SearchScreenState extends State<SearchScreen> {
     _featuredController = PageController(viewportFraction: 1.0);
     _initFeaturedCarouselOnDemand();
 
-    // Start auto-advance loop
     _startFeaturedAutoAdvance();
 
-    // Rebuild when user types so Featured card can disappear immediately.
-    // Also: typing should not trigger "No matches found" until a search is run.
     _searchController.addListener(() {
       if (!mounted) return;
       setState(() {
-        // Intentionally do not set _hasSearched here.
+        // typing should not set _hasSearched
       });
     });
   }
@@ -104,6 +105,76 @@ class _SearchScreenState extends State<SearchScreen> {
     _featuredController.dispose();
     _searchController.dispose();
     super.dispose();
+  }
+
+  // ---------- Web constraint (matches AnalysisScreen) ----------
+
+  Widget _webConstrain(Widget child) {
+    if (!kIsWeb) return child;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: kWebMaxWidth),
+        child: child,
+      ),
+    );
+  }
+
+  // ---------- Shared “nice banner” image treatment (matches AnalysisScreen vibe) ----------
+
+  Widget _buildNiceHeaderImage(String url) {
+    if (url.trim().isEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: AspectRatio(
+          aspectRatio: 460 / 215,
+          child: Container(
+            color: Colors.grey.shade200,
+            child: const Center(
+              child: Icon(Icons.videogame_asset, size: 30, color: Colors.black54),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: AspectRatio(
+        aspectRatio: 460 / 215,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Background fill
+            Image.network(
+              url,
+              fit: BoxFit.cover,
+              filterQuality: FilterQuality.high,
+              errorBuilder: (context, error, stackTrace) =>
+                  Container(color: Colors.grey.shade200),
+            ),
+
+            // Blur + subtle tint
+            BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Container(color: Colors.black.withValues(alpha: 0.12)),
+            ),
+
+            // Foreground contain (full banner visible)
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+                errorBuilder: (context, error, stackTrace) => const Center(
+                  child: Icon(Icons.image_not_supported),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ---------- Featured game helpers ----------
@@ -120,7 +191,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Future<Game?> _enrichViaSteamStoreApi(String appId, Game base) async {
     // Steam Store API is often blocked by CORS on Flutter Web.
-    // We still try – and fail gracefully (keeps the app stable).
+    // We still try – and fail gracefully.
     if (appId.trim().isEmpty) return base;
 
     final uri = Uri.parse(
@@ -167,7 +238,7 @@ class _SearchScreenState extends State<SearchScreen> {
         publisher: pubs.isNotEmpty ? pubs.join(', ') : base.publisher,
         releaseDate: releaseDate.isNotEmpty ? releaseDate : base.releaseDate,
       );
-    } catch (_) {
+    } catch (e) {
       return base;
     }
   }
@@ -259,7 +330,7 @@ class _SearchScreenState extends State<SearchScreen> {
           _featuredLoaded.add(index);
         });
       }
-    } catch (_) {
+    } catch (e) {
       // keep placeholder
     } finally {
       _featuredLoading.remove(index);
@@ -323,7 +394,7 @@ class _SearchScreenState extends State<SearchScreen> {
           builder: (context) => AnalysisScreen(selectedGame: resolved),
         ),
       );
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not load this featured game.')),
@@ -339,12 +410,11 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _startFeaturedAutoAdvance() {
     _featuredAutoTimer?.cancel();
-    _featuredAutoTimer = Timer.periodic(_autoAdvanceEvery, (_) {
+    _featuredAutoTimer = Timer.periodic(_autoAdvanceEvery, (timer) {
       if (!mounted) return;
 
-      // Only run when Featured is visible (same logic as build: showFeatured = query.isEmpty)
+      // Only run when Featured is visible
       if (_searchController.text.trim().isNotEmpty) return;
-
       if (_featuredGames.isEmpty) return;
       if (_featuredUserScrolling) return;
 
@@ -479,6 +549,31 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
     );
   }
+  // --- Install to Home Screen (in-app help) ---
+  void _showInstallToHomeScreenDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Install on home screen'),
+        content: const Text(
+          'Android (Chrome):\n'
+          '1) Tap the ⋮ menu (top-right)\n'
+          '2) Tap “Install app” or “Add to Home screen”\n\n'
+          'iPhone/iPad (Safari):\n'
+          '1) Tap Share\n'
+          '2) Tap “Add to Home Screen”\n\n'
+          'If you don’t see install options, it usually means the app isn’t being served over HTTPS, '
+          'or the browser doesn’t consider it installable yet.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
 
   Future<void> _launchBuyMeACoffee() async {
     final uri = Uri.parse(_buyMeACoffeeUrl);
@@ -520,7 +615,6 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
 
-          // About
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('About'),
@@ -586,7 +680,6 @@ class _SearchScreenState extends State<SearchScreen> {
             },
           ),
 
-          // How it works
           ListTile(
             leading: const Icon(Icons.help_outline),
             title: const Text('How it works'),
@@ -647,7 +740,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
           const Divider(),
 
-          // Policy & Privacy
           ListTile(
             leading: const Icon(Icons.policy),
             title: const Text('Policy & Privacy'),
@@ -694,7 +786,6 @@ class _SearchScreenState extends State<SearchScreen> {
             },
           ),
 
-          // Attribution
           ListTile(
             leading: const Icon(Icons.favorite_outline),
             title: const Text('Attribution'),
@@ -726,7 +817,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
           const Divider(),
 
-          // Feedback & Contact
           ListTile(
             leading: const Icon(Icons.feedback_outlined),
             title: const Text('Feedback & Contact'),
@@ -736,7 +826,6 @@ class _SearchScreenState extends State<SearchScreen> {
             },
           ),
 
-          // Buy Me a Coffee
           ListTile(
             leading: const Icon(Icons.local_cafe_outlined),
             title: const Text('Buy me a coffee'),
@@ -759,7 +848,7 @@ class _SearchScreenState extends State<SearchScreen> {
       setState(() {
         _searchResults.clear();
         _error = null;
-        _hasSearched = false; // reset if they blank it out and "search"
+        _hasSearched = false;
       });
       return;
     }
@@ -798,8 +887,10 @@ class _SearchScreenState extends State<SearchScreen> {
         const SnackBar(content: Text('Failed to search games.')),
       );
     } finally {
-      if (!mounted) return;
-      setState(() => _isLoading = false);
+      // Fix lint: no "return" inside finally
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -925,15 +1016,6 @@ class _SearchScreenState extends State<SearchScreen> {
                 fontStyle: FontStyle.italic,
               ),
             ),
-            if (kIsWeb)
-              const Padding(
-                padding: EdgeInsets.only(top: 6),
-                child: Text(
-                  'Note: some Steam metadata may be limited on web.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 10, color: Colors.black45),
-                ),
-              ),
           ],
         ),
       ),
@@ -951,86 +1033,64 @@ class _SearchScreenState extends State<SearchScreen> {
       final bool pagePlaceholder = g.appid == '0';
       final bool pageLoading = _featuredLoading.contains(index);
 
-      return Padding(
-        padding: const EdgeInsets.only(right: 0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (pagePlaceholder || _safeTrim(g.headerImageUrl).isEmpty)
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: AspectRatio(
                 aspectRatio: 460 / 215,
-                child: (pagePlaceholder || _safeTrim(g.headerImageUrl).isEmpty)
-                    ? Container(
-                        color: Colors.grey.shade200,
-                        child: Center(
-                          child: SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                pageLoading ? Colors.black : Colors.black54,
-                              ),
-                            ),
-                          ),
-                        ),
-                      )
-                    : Image.network(
-                        g.headerImageUrl,
-                        fit: BoxFit.cover,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Container(
-                            color: Colors.grey.shade200,
-                            child: const Center(
-                              child: SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            ),
-                          );
-                        },
-                        errorBuilder: (_, __, ___) => Container(
-                          color: Colors.grey.shade200,
-                          child: const Center(child: Icon(Icons.image_not_supported)),
+                child: Container(
+                  color: Colors.grey.shade200,
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          pageLoading ? Colors.black : Colors.black54,
                         ),
                       ),
+                    ),
+                  ),
+                ),
               ),
+            )
+          else
+            _buildNiceHeaderImage(g.headerImageUrl),
+          const SizedBox(height: 8),
+          Text(
+            g.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textHeightBehavior: const TextHeightBehavior(
+              applyHeightToFirstAscent: false,
+              applyHeightToLastDescent: false,
             ),
-            const SizedBox(height: 8),
-            Text(
-              g.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textHeightBehavior: const TextHeightBehavior(
-                applyHeightToFirstAscent: false,
-                applyHeightToLastDescent: false,
-              ),
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                color: Colors.black,
-                height: 1.05,
-              ),
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: Colors.black,
+              height: 1.05,
             ),
-            const SizedBox(height: 4),
-            Text(
-              pagePlaceholder ? 'Loading…' : 'Steam AppID: ${g.appid}',
-              textHeightBehavior: const TextHeightBehavior(
-                applyHeightToFirstAscent: false,
-                applyHeightToLastDescent: false,
-              ),
-              style: const TextStyle(
-                fontSize: 11,
-                color: Colors.black54,
-                fontWeight: FontWeight.w600,
-                height: 1.05,
-              ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            pagePlaceholder ? 'Loading…' : 'Steam AppID: ${g.appid}',
+            textHeightBehavior: const TextHeightBehavior(
+              applyHeightToFirstAscent: false,
+              applyHeightToLastDescent: false,
             ),
-          ],
-        ),
+            style: const TextStyle(
+              fontSize: 11,
+              color: Colors.black54,
+              fontWeight: FontWeight.w600,
+              height: 1.05,
+            ),
+          ),
+        ],
       );
     }
 
@@ -1069,7 +1129,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 },
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onPanDown: (_) {
+                  onPanDown: (details) {
                     _featuredUserScrolling = true;
                     _markFeaturedUserInteraction();
                   },
@@ -1077,7 +1137,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     _featuredUserScrolling = false;
                     _markFeaturedUserInteraction();
                   },
-                  onPanEnd: (_) {
+                  onPanEnd: (details) {
                     _featuredUserScrolling = false;
                     _markFeaturedUserInteraction();
                   },
@@ -1205,7 +1265,7 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
             SizedBox(height: 6),
             Text(
-              'Tap a result to open its STS Profile.',
+              'If you haven’t used the app in a while, the first search can take a little longer as the server restarts – this is normal.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12, color: Colors.black54),
             ),
@@ -1364,62 +1424,64 @@ class _SearchScreenState extends State<SearchScreen> {
         ),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-          child: CustomScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            slivers: [
-              SliverToBoxAdapter(child: _buildHeroCard()),
-              const SliverToBoxAdapter(child: SizedBox(height: kGapS)),
+        child: _webConstrain(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+            child: CustomScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              slivers: [
+                SliverToBoxAdapter(child: _buildHeroCard()),
+                const SliverToBoxAdapter(child: SizedBox(height: kGapS)),
 
-              if (showFeatured) ...[
-                SliverToBoxAdapter(child: _buildFeaturedCarouselCard()),
-                const SliverToBoxAdapter(child: SizedBox(height: kGapM)),
-              ],
+                if (showFeatured) ...[
+                  SliverToBoxAdapter(child: _buildFeaturedCarouselCard()),
+                  const SliverToBoxAdapter(child: SizedBox(height: kGapM)),
+                ],
 
-              if (_error != null)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: kGapS),
-                    child: Text(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.red,
-                        fontWeight: FontWeight.w700,
+                if (_error != null)
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(bottom: kGapS),
+                      child: Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ),
-                ),
 
-              if (_isLoading)
-                const SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (_searchResults.isEmpty && query.isEmpty)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _buildEmptyState(),
-                )
-              else if (_searchResults.isEmpty && query.isNotEmpty && _hasSearched)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _buildNoResultsState(),
-                )
-              else if (_searchResults.isEmpty && query.isNotEmpty && !_hasSearched)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: _buildEmptyState(),
-                )
-              else
-                SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) => _buildResultCard(_searchResults[index]),
-                    childCount: _searchResults.length,
+                if (_isLoading)
+                  const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_searchResults.isEmpty && query.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _buildEmptyState(),
+                  )
+                else if (_searchResults.isEmpty && query.isNotEmpty && _hasSearched)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _buildNoResultsState(),
+                  )
+                else if (_searchResults.isEmpty && query.isNotEmpty && !_hasSearched)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _buildEmptyState(),
+                  )
+                else
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => _buildResultCard(_searchResults[index]),
+                      childCount: _searchResults.length,
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
