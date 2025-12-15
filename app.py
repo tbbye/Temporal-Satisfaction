@@ -243,10 +243,7 @@ def _store_entry_under_keys(
     k2, k1_req = _make_keys(app_id, review_filter, language, requested_count)
     _,  k1_eff = _make_keys(app_id, review_filter, language, effective_count)
 
-    # always store v2
     TEMP_REVIEW_CACHE[k2] = entry
-
-    # also store old v1 keys (requested + effective)
     if k1_req:
         TEMP_REVIEW_CACHE[k1_req] = entry
     if k1_eff:
@@ -415,7 +412,6 @@ def analyze_theme_reviews(review_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 def calculate_playtime_distribution(all_reviews: List[Dict[str, Any]]) -> Dict[str, Any]:
-    # collect playtime hours safely
     vals: List[float] = []
     for r in (all_reviews or []):
         try:
@@ -454,7 +450,6 @@ def calculate_playtime_distribution(all_reviews: List[Dict[str, Any]]) -> Dict[s
     # IMPORTANT: last edge must always be > 100 to keep bins increasing
     last_edge = max(100.0, float(np.max(arr))) + 1.0
 
-    # bins: <1, 1–5, 5–10, 10–20, 20–50, 50–100, 100+
     bins = [0, 1, 5, 10, 20, 50, 100, last_edge]
     hist, _ = np.histogram(arr, bins=bins)
 
@@ -496,7 +491,6 @@ def analyze_steam_reviews_api() -> Response:
 
     _purge_cache()
 
-    # Fetch existing entry (try both key styles)
     entry = _get_cached_entry(app_id, review_filter, language, review_count_hint=review_count_req)
     if isinstance(entry, dict):
         created_at = float(entry.get("created_at", 0) or 0)
@@ -522,7 +516,6 @@ def analyze_steam_reviews_api() -> Response:
 
     cursor = entry.get("cursor", "*") or "*"
 
-    # Determine effective target if we know total
     steam_total = entry.get("steam_total_reviews", None)
     if isinstance(steam_total, int) and steam_total >= 0:
         target_count = _clamp(min(review_count_req, steam_total), MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
@@ -577,7 +570,6 @@ def analyze_steam_reviews_api() -> Response:
 
             reviews_on_page = payload.get("reviews", []) or []
             if not reviews_on_page:
-                # terminal condition even if cursor looks odd
                 params["cursor"] = None
                 break
 
@@ -612,11 +604,9 @@ def analyze_steam_reviews_api() -> Response:
         entry["created_at"] = _now()
         entry["all_reviews"] = all_reviews
 
-        # if Steam didn't give totals, but we're terminal, infer total from collected
         if entry.get("steam_total_reviews", None) is None and not _cursor_ok(cursor):
             entry["steam_total_reviews"] = len(all_reviews)
 
-    # Actual analysed count
     effective_target = _safe_int(entry.get("effective_target_count", review_count_req), review_count_req)
     analysed_count = min(effective_target, len(all_reviews))
     reviews_used = all_reviews[:analysed_count]
@@ -632,19 +622,19 @@ def analyze_steam_reviews_api() -> Response:
     grind_analysis = analyze_theme_reviews(themed_by["grind"])
     value_analysis = analyze_theme_reviews(themed_by["value"])
 
+    # FIX 1: indentation + safe fallback
     try:
-    playtime_distribution = calculate_playtime_distribution(reviews_used)
-except Exception as e:
-    print(f"[playtime] Error: {e}")
-    playtime_distribution = {
-        "median_hours": 0.0,
-        "percentile_25th": 0.0,
-        "percentile_75th": 0.0,
-        "interpretation": "Playtime distribution could not be calculated.",
-        "histogram_buckets": [0] * 7,
-        "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
-    }
-
+        playtime_distribution = calculate_playtime_distribution(reviews_used)
+    except Exception as e:
+        print(f"[playtime] Error: {e}")
+        playtime_distribution = {
+            "median_hours": 0.0,
+            "percentile_25th": 0.0,
+            "percentile_75th": 0.0,
+            "interpretation": "Playtime distribution could not be calculated.",
+            "histogram_buckets": [0] * 7,
+            "histogram_bins_hours": ["<1", "1–5", "5–10", "10–20", "20–50", "50–100", "100+"],
+        }
 
     appdetails = fetch_steam_appdetails(app_id) or {
         "developer": "N/A",
@@ -664,11 +654,6 @@ except Exception as e:
     elif len(themed_used) == 0:
         note = (note + " " if note else "") + f"No time-centric keywords were found in the {analysed_count} reviews analysed."
 
-    # IMPORTANT COMPATIBILITY:
-    # Many older frontends assume review_count_used == requested, even if fewer exist.
-    # So we include BOTH:
-    #   review_count_used -> requested (legacy)
-    #   review_count_analyzed -> actual analysed
     payload_out: Dict[str, Any] = {
         "status": "success",
         "app_id": app_id,
@@ -677,7 +662,7 @@ except Exception as e:
 
         "review_count_requested": review_count_req,
         "review_count_used": review_count_req,          # legacy / UI compatibility
-        "review_count_analyzed": analysed_count,        # the truth you can display
+        "review_count_analyzed": analysed_count,        # actual analysed count
         "steam_total_reviews": steam_total,             # helps show "22 reviews total"
 
         "note": note,
@@ -732,14 +717,12 @@ except Exception as e:
         },
     }
 
-    # Store legacy fields expected by your older /reviews + /export code paths
     entry["payload"] = payload_out
     entry["reviews"] = themed_used  # legacy: themed reviews list for paging/export
     entry["created_at"] = _now()
     entry["all_reviews"] = all_reviews
     entry["effective_target_count"] = effective_target
 
-    # Store entry under BOTH key formats (requested + effective)
     _store_entry_under_keys(
         entry=entry,
         app_id=app_id,
@@ -835,9 +818,9 @@ def get_paginated_reviews() -> Response:
     total_count_raw = request.args.get("total_count", None)
     total_count_hint = _safe_int(total_count_raw, 0) if total_count_raw is not None else None
 
-    # defaults: themed-only like old behaviour, but fallback so empty-themed games still show something
+    # FIX 2: do NOT fallback to returning all reviews by default
     themed_only = _truthy_flag(request.args.get("themed_only", "1"), default=True)
-    fallback_to_all_if_none = _truthy_flag(request.args.get("fallback_to_all_if_none", "1"), default=True)
+    fallback_to_all_if_none = _truthy_flag(request.args.get("fallback_to_all_if_none", "0"), default=False)
 
     if not app_id:
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
@@ -869,20 +852,11 @@ def get_paginated_reviews() -> Response:
         total_count = min(total_count, len(all_reviews))
 
     reviews_used = all_reviews[:total_count]
-
-    # legacy themed list (preferred if present)
-    themed_legacy = cached.get("reviews", [])
-    if not isinstance(themed_legacy, list):
-        themed_legacy = []
-
-    # recompute themed from current used slice (correct for total_count)
     themed = [r for r in reviews_used if (r.get("theme_tags") or [])]
 
-    # Use themed list unless explicitly requesting all
     mode_returned = "themed" if themed_only else "all"
     items = themed if themed_only else reviews_used
 
-    # key behaviour: if themed is empty, optionally fallback to all
     if themed_only and fallback_to_all_if_none and len(items) == 0 and len(reviews_used) > 0:
         items = reviews_used
         mode_returned = "all_fallback"
@@ -919,7 +893,8 @@ def export_reviews_csv() -> Response:
     total_count_hint = _safe_int(total_count_raw, 0) if total_count_raw is not None else None
 
     themed_only = _truthy_flag(request.args.get("themed_only", "1"), default=True)
-    fallback_to_all_if_none = _truthy_flag(request.args.get("fallback_to_all_if_none", "1"), default=True)
+    # FIX 3: do NOT fallback to exporting all reviews by default
+    fallback_to_all_if_none = _truthy_flag(request.args.get("fallback_to_all_if_none", "0"), default=False)
 
     if not app_id:
         return jsonify({"error": "Missing 'app_id' parameter."}), 400
