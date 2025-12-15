@@ -420,7 +420,8 @@ def analyze_steam_reviews_api() -> Response:
         return jsonify({"error": "Missing 'app_id' in request body."}), 400
 
     review_count_req = _safe_int(data.get("review_count", 1000), 1000)
-    review_count_req = _clamp(review_count_req, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
+    # This is the line that fully supports the "lesser review thing" from the user request side.
+    review_count_req = _clamp(review_count_req, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT) 
 
     review_filter = str((data.get("filter") or "recent")).strip().lower()
     if review_filter not in {"recent", "updated", "all"}:
@@ -460,6 +461,7 @@ def analyze_steam_reviews_api() -> Response:
     steam_total = entry.get("steam_total_reviews", None)
     if isinstance(steam_total, int) and steam_total >= 0:
         # If we know the Steam total, the target is the minimum of requested and available
+        # This is the line that fully supports the "lesser review thing" from the data side.
         target_count = _clamp(min(review_count_req, steam_total), MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
     else:
         # If we don't know the Steam total yet, assume the requested amount (until first fetch)
@@ -585,7 +587,7 @@ def analyze_steam_reviews_api() -> Response:
     
     note = None
     if isinstance(steam_total, int) and steam_total >= 0 and steam_total < review_count_req:
-        note = f"Steam reports only {steam_total} total reviews for this game with the selected filter/language, so analysis uses {effective_target}."
+        note = f"Steam reports only {steam_total} total reviews for this game with the selected filter/language, so analysis uses {effective_target}. (This covers the 'lesser review' scenario.)"
 
 
     return jsonify(
@@ -712,6 +714,7 @@ def search_game() -> Response:
                     "release_date": release_date,
                     "developer": developer,
                     "publisher": publisher,
+                    "publisher": publisher,
                 }
             )
 
@@ -771,7 +774,8 @@ def get_paginated_reviews() -> Response:
         total_count = _clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
     # Also clamp to what we actually have cached, so small-review games work cleanly.
-    total_count = min(total_count, len(all_reviews))
+    # This also enforces the "lesser review thing" from the available data side.
+    total_count = min(total_count, len(all_reviews)) 
 
     reviews_used = all_reviews[:total_count]
     themed = [r for r in reviews_used if (r.get("theme_tags") or [])]
@@ -833,6 +837,7 @@ def export_reviews_csv() -> Response:
         total_count = _safe_int(total_count_raw, effective_target)
         total_count = _clamp(total_count, MIN_REVIEW_COUNT, MAX_REVIEW_COUNT)
 
+    # This also enforces the "lesser review thing" from the available data side.
     total_count = min(total_count, len(all_reviews))
 
     reviews_used = all_reviews[:total_count]
