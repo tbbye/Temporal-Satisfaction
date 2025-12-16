@@ -805,17 +805,6 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
           const Divider(),
 
-          // ✅ This was missing: menu entry that actually opens the install instructions.
-          if (kIsWeb)
-            ListTile(
-              leading: const Icon(Icons.install_mobile),
-              title: const Text('Install on home screen'),
-              onTap: () {
-                Navigator.pop(context);
-                _showInstallToHomeScreenDialog();
-              },
-            ),
-
           ListTile(
             leading: const Icon(Icons.policy),
             title: const Text('Policy & Privacy'),
@@ -839,11 +828,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   ),
                   const TextSpan(
                     text:
-                        'The app relies on Valve’s public Steam Web API. Content may change or be removed at any time.\n\n',
-                  ),
-                  const TextSpan(
-                    text:
-                        'This project is not affiliated with, sponsored by, or endorsed by Valve Corporation or Steam.\n\n',
+                        'The app relies on Valve’s public Steam Web API. Content may change or be removed at any time.This project is not affiliated with, sponsored by, or endorsed by Valve Corporation or Steam.\n\n',
                   ),
                   const TextSpan(
                     text: 'No warranty\n',
@@ -885,24 +870,37 @@ class _SearchScreenState extends State<SearchScreen> {
               );
             },
           ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.feedback_outlined),
-            title: const Text('Feedback & Contact'),
-            onTap: () {
-              Navigator.pop(context);
-              _showFeedbackDialog();
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.local_cafe_outlined),
-            title: const Text('Buy me a coffee'),
-            onTap: () {
-              Navigator.pop(context);
-              _launchBuyMeACoffee();
-            },
-          ),
-        ],
+const Divider(),
+
+ListTile(
+  leading: const Icon(Icons.install_mobile),
+  title: const Text('Install on home screen'),
+  onTap: () {
+    Navigator.pop(context);
+    _showInstallToHomeScreenDialog();
+  },
+),
+
+ListTile(
+  leading: const Icon(Icons.feedback_outlined),
+  title: const Text('Feedback & Contact'),
+  onTap: () {
+    Navigator.pop(context);
+    _showFeedbackDialog();
+  },
+),
+
+ListTile(
+  leading: const Icon(Icons.local_cafe_outlined),
+  title: const Text('Buy me a coffee'),
+  onTap: () {
+    Navigator.pop(context);
+    _launchBuyMeACoffee();
+  },
+),
+
+// (no second divider + no duplicate tiles)
+],
       ),
     );
   }

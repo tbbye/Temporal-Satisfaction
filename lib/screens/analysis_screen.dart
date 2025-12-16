@@ -913,7 +913,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                   ),
                   const TextSpan(
                     text:
-                        'The app relies on Valve’s public Steam Web API. Content may change or be removed at any time.\n\n',
+                        'The app relies on Valve’s public Steam Web API. Content may change or be removed at any time.This project is not affiliated with, sponsored by, or endorsed by Valve Corporation or Steam.\n\n',
                   ),
                   const TextSpan(
                     text: 'No warranty\n',
