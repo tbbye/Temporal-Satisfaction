@@ -1,5 +1,6 @@
 // lib/screens/analysis_screen.dart
 
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_saver/file_saver.dart';
@@ -106,7 +107,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   AnalysisResult? _analysisResult;
   bool _isLoadingAnalysis = true;
   String? _error;
-  bool _titleExpanded = false;
+
   // --- Filter State ---
   String? _selectedThemeFilter; // 'length', 'grind', 'value'
   String? _selectedSentimentFilter; // 'Positive', 'Negative', 'Neutral'
@@ -119,9 +120,8 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   bool _isLoadingReviews = false;
   bool _hasMoreReviews = true;
 
-  // --- Capture targets (PNG downloads) ---
-  final GlobalKey _shareCardKey = GlobalKey(); // poster
-  final GlobalKey _pageCaptureKey = GlobalKey(); // visible screenshot
+  // --- Visible screenshot capture (optional) ---
+  final GlobalKey _pageCaptureKey = GlobalKey();
 
   @override
   void initState() {
@@ -316,12 +316,12 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     });
   }
 
-  // --- Export CSV Logic (Web vs Android) ---
+  // --- Export CSV Logic (do not touch) ---
   Future<void> _exportCSVData() async {
     if (_analysisResult == null) return;
 
     final exportUrl =
-    '${widget.baseUrl}/export?app_id=${widget.selectedGame.appid}&total_count=${_analysisResult!.reviewCountAnalyzed}';
+        '${widget.baseUrl}/export?app_id=${widget.selectedGame.appid}&total_count=${_analysisResult!.reviewCountAnalyzed}';
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Preparing export...')),
@@ -383,7 +383,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     }
   }
 
-  // --- Install to Home Screen (in-app help) ---
+  // --- Install to Home Screen (exact same text as SearchScreen) ---
   void _showInstallToHomeScreenDialog() {
     showDialog(
       context: context,
@@ -411,140 +411,123 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
 
   // --- Banner image that looks good on wide web screens ---
   Widget _buildNiceHeaderImage(String url) {
-  if (url.trim().isEmpty) {
-    return Container(
-      height: 180,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Colors.grey.shade200,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Icon(Icons.videogame_asset, size: 34),
-    );
-  }
+    if (url.trim().isEmpty) {
+      return Container(
+        height: 180,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.videogame_asset, size: 34),
+      );
+    }
 
-  return ClipRRect(
-    borderRadius: BorderRadius.circular(12),
-    child: AspectRatio(
-      aspectRatio: 460 / 215,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.network(
-            url,
-            fit: BoxFit.cover,
-            filterQuality: FilterQuality.high,
-            errorBuilder: (context, error, stackTrace) =>
-                Container(color: Colors.grey.shade200),
-          ),
-          BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-            child: Container(color: Colors.black.withValues(alpha: 0.12)),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(10),
-            child: Image.network(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: AspectRatio(
+        aspectRatio: 460 / 215,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.network(
               url,
-              fit: BoxFit.contain,
+              fit: BoxFit.cover,
               filterQuality: FilterQuality.high,
-              errorBuilder: (context, error, stackTrace) => const Center(
-                child: Icon(Icons.image_not_supported),
+              errorBuilder: (context, error, stackTrace) =>
+                  Container(color: Colors.grey.shade200),
+            ),
+            BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Container(color: Colors.black.withValues(alpha: 0.12)),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+                errorBuilder: (context, error, stackTrace) => const Center(
+                  child: Icon(Icons.image_not_supported),
+                ),
               ),
             ),
-          ),
 
-          // ✅ Steam chip overlay
-          Positioned(
-            right: 10,
-            bottom: 10,
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: () => _launchExternalUrl(_steamStoreUrl),
-                borderRadius: BorderRadius.circular(999),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.72),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.25),
-                    ),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.open_in_new, size: 16, color: Colors.white),
-                      SizedBox(width: 6),
-                      Text(
-                        'Steam page',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                        ),
+            // Steam chip overlay
+            Positioned(
+              right: 10,
+              bottom: 10,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => _launchExternalUrl(_steamStoreUrl),
+                  borderRadius: BorderRadius.circular(999),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.72),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.25),
                       ),
-                    ],
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.open_in_new, size: 16, color: Colors.white),
+                        SizedBox(width: 6),
+                        Text(
+                          'Steam page',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
-}
-
-  // ---------- Share: web-first ----------
-  String _verdictForTheme(ThemeScore score) {
-    final found = score.found;
-    if (found == 0) return 'N/A';
-    if (score.positivePercent >= 60) return 'Positive';
-    if (score.negativePercent >= 60) return 'Negative';
-    return 'Mixed';
-  }
-
-  String _buildShareSummaryText(AnalysisResult a) {
-    final t = a.thematicScores;
-    final lengthV = _verdictForTheme(t.length);
-    final grindV = _verdictForTheme(t.grind);
-    final valueV = _verdictForTheme(t.value);
-
-    final median = a.playtimeDistribution.medianHours;
-    final medianStr = median.isNaN ? 'N/A' : '${median.toStringAsFixed(1)}h';
-
-    return '${widget.selectedGame.name} – STS Profile\n'
-        'Steam AppID: ${widget.selectedGame.appid}\n'
-        'Store: $_steamStoreUrl\n\n'
-        'Scope: ${a.reviewCountAnalyzed} reviews collected\n'
-        'Themed reviews found: ${a.totalThemedReviews}\n\n'
-        'Length: $lengthV\n'
-        'Grind: $grindV\n'
-        'Value: $valueV\n\n'
-        'Median total playtime: $medianStr\n\n'
-        'Note: Generated from recent Steam reviews. Automated sentiment is indicative only.';
-  }
-
-  Future<void> _copyShortSummary() async {
-    final a = _analysisResult;
-    if (a == null) return;
-
-    await Clipboard.setData(ClipboardData(text: _buildShareSummaryText(a)));
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied summary to clipboard.')),
     );
   }
 
-  Future<void> _copyPageLink() async {
-    final url = Uri.base.toString();
+  // ==========================
+  // SHARE (FIXED)
+  // ==========================
+
+  String _buildShareUrlForGame() {
+    final base = Uri.base;
+
+    final params = <String, String>{
+      'appid': widget.selectedGame.appid,
+      'name': widget.selectedGame.name,
+    };
+
+    // Support hash routing: keep fragment route and append query
+    if (base.fragment.isNotEmpty) {
+      final frag = base.fragment;
+      final fragBase = frag.contains('?') ? frag.split('?').first : frag;
+      final q = Uri(queryParameters: params).query;
+      return base.replace(fragment: '$fragBase?$q').toString();
+    }
+
+    // Normal query routing: merge with existing params
+    final merged = Map<String, String>.from(base.queryParameters)..addAll(params);
+    return base.replace(queryParameters: merged).toString();
+  }
+
+  Future<void> _copyShareLink() async {
+    final url = _buildShareUrlForGame();
     await Clipboard.setData(ClipboardData(text: url));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied page link to clipboard.')),
+      const SnackBar(content: Text('Share link copied.')),
     );
   }
 
@@ -556,6 +539,76 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     return 'STS_${widget.selectedGame.appid}_$safeName';
   }
 
+  // Render a full “poster” widget off-screen and capture it as PNG (reliable).
+  Future<Uint8List> _renderPosterPng(Widget poster) async {
+    final key = GlobalKey();
+    final overlay = Overlay.of(context, rootOverlay: true);
+    if (overlay == null) throw Exception('Overlay not available');
+
+    final entry = OverlayEntry(
+      builder: (context) => Positioned(
+        left: -10000,
+        top: -10000,
+        child: Material(
+          type: MaterialType.transparency,
+          child: RepaintBoundary(
+            key: key,
+            child: SizedBox(
+              width: 1080,
+              child: poster,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    overlay.insert(entry);
+
+    await Future.delayed(const Duration(milliseconds: 50));
+    await WidgetsBinding.instance.endOfFrame;
+
+    final boundary =
+        key.currentContext!.findRenderObject() as RenderRepaintBoundary;
+
+    final image = await boundary.toImage(pixelRatio: 2.0);
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+
+    entry.remove();
+
+    if (byteData == null) throw Exception('PNG capture failed');
+    return byteData.buffer.asUint8List();
+  }
+
+  Future<void> _savePngBytes(Uint8List bytes, String filenameStem) async {
+    await FileSaver.instance.saveFile(
+      name: filenameStem,
+      bytes: bytes,
+      ext: 'png',
+      mimeType: MimeType.png,
+    );
+  }
+
+  Future<void> _exportPosterPng() async {
+    final a = _analysisResult;
+    if (a == null) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Rendering poster…')),
+    );
+
+    final poster = _buildPosterWidget(a);
+    final bytes = await _renderPosterPng(poster);
+
+    final stem = '${_safeFileStem()}_poster';
+    await _savePngBytes(bytes, stem);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Saved poster PNG.')),
+    );
+  }
+
+  // Optional: visible screenshot (kept, but not your “main” share path)
   Future<Uint8List> _capturePngFromKey(GlobalKey key) async {
     final ctx = key.currentContext;
     if (ctx == null) throw Exception('Capture target not ready');
@@ -571,29 +624,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     return byteData.buffer.asUint8List();
   }
 
-  Future<void> _savePngBytes(Uint8List bytes, String filenameStem) async {
-    await FileSaver.instance.saveFile(
-      name: filenameStem,
-      bytes: bytes,
-      ext: 'png',
-      mimeType: MimeType.png,
-    );
-  }
-
-  Future<void> _downloadPosterPng() async {
-    final a = _analysisResult;
-    if (a == null) return;
-
-    final bytes = await _capturePngFromKey(_shareCardKey);
-    final stem = '${_safeFileStem()}_poster';
-    await _savePngBytes(bytes, stem);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Saved poster PNG.')),
-    );
-  }
-
   Future<void> _downloadVisibleScreenshotPng() async {
     final bytes = await _capturePngFromKey(_pageCaptureKey);
     final stem = '${_safeFileStem()}_screenshot';
@@ -605,22 +635,20 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  String _pageUrl() => Uri.base.toString();
-
   Future<void> _shareLinkWhatsApp() async {
-    final url = _pageUrl();
+    final url = _buildShareUrlForGame();
     final text = Uri.encodeComponent('STS Profile – $url');
     await _launchExternalUrl('https://wa.me/?text=$text');
   }
 
   Future<void> _shareLinkTelegram() async {
-    final url = Uri.encodeComponent(_pageUrl());
+    final url = Uri.encodeComponent(_buildShareUrlForGame());
     final text = Uri.encodeComponent('STS Profile');
     await _launchExternalUrl('https://t.me/share/url?url=$url&text=$text');
   }
 
   Future<void> _shareLinkX() async {
-    final url = Uri.encodeComponent(_pageUrl());
+    final url = Uri.encodeComponent(_buildShareUrlForGame());
     final text = Uri.encodeComponent('STS Profile');
     await _launchExternalUrl(
         'https://twitter.com/intent/tweet?text=$text&url=$url');
@@ -629,77 +657,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   Future<void> _shareLinkEmail() async {
     final subject =
         Uri.encodeComponent('STS Profile – ${widget.selectedGame.name}');
-    final body =
-        Uri.encodeComponent('Here’s the STS Profile link:\n\n${_pageUrl()}');
+    final body = Uri.encodeComponent(
+        'Here’s the STS Profile link:\n\n${_buildShareUrlForGame()}');
     await _launchExternalUrl('mailto:?subject=$subject&body=$body');
-  }
-
-  // Poster image (consistent)
-  Widget _buildShareCardWidget(AnalysisResult a) {
-    final t = a.thematicScores;
-
-    String row(String label, String value) => '$label: $value';
-
-    final median = a.playtimeDistribution.medianHours;
-    final medianStr = median.isNaN ? 'N/A' : '${median.toStringAsFixed(1)}h';
-
-    return RepaintBoundary(
-      key: _shareCardKey,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade300),
-        ),
-        child: DefaultTextStyle(
-          style: const TextStyle(color: Colors.black87),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${widget.selectedGame.name} – STS Profile',
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                row('Steam AppID', widget.selectedGame.appid),
-                style: const TextStyle(
-                    fontSize: 12, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                row('Scope', '${a.reviewCountAnalyzed} reviews collected'),
-                style: const TextStyle(fontSize: 12),
-              ),
-              Text(
-                row('Themed reviews found', '${a.totalThemedReviews}'),
-                style: const TextStyle(fontSize: 12),
-              ),
-              const SizedBox(height: 10),
-              Text(row('Length', _verdictForTheme(t.length)),
-                  style: const TextStyle(fontSize: 12)),
-              Text(row('Grind', _verdictForTheme(t.grind)),
-                  style: const TextStyle(fontSize: 12)),
-              Text(row('Value', _verdictForTheme(t.value)),
-                  style: const TextStyle(fontSize: 12)),
-              const SizedBox(height: 10),
-              Text(
-                row('Median total playtime', medianStr),
-                style:
-                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Automated sentiment is indicative only – not an official rating.',
-                style: TextStyle(fontSize: 11, color: Colors.black54),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   void _openShareMenu() {
@@ -718,38 +678,20 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               shrinkWrap: true,
               children: [
                 ListTile(
-                  leading: const Icon(Icons.content_copy),
-                  title: const Text('Copy summary'),
+                  leading: const Icon(Icons.image_outlined),
+                  title: const Text('Export poster image (PNG)'),
+                  subtitle: const Text('Best way to share the full visual profile'),
                   onTap: () async {
                     Navigator.pop(ctx);
-                    await _copyShortSummary();
+                    await _exportPosterPng();
                   },
                 ),
                 ListTile(
                   leading: const Icon(Icons.link),
-                  title: const Text('Copy page link'),
+                  title: const Text('Copy share link'),
                   onTap: () async {
                     Navigator.pop(ctx);
-                    await _copyPageLink();
-                  },
-                ),
-                const Divider(height: 8),
-                ListTile(
-                  leading: const Icon(Icons.image_outlined),
-                  title: const Text('Save poster image (PNG)'),
-                  subtitle:
-                      const Text('Best for Messenger/Discord/Slack attachments'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await _downloadPosterPng();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.screenshot_monitor),
-                  title: const Text('Save visible screenshot (PNG)'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await _downloadVisibleScreenshotPng();
+                    await _copyShareLink();
                   },
                 ),
                 const Divider(height: 8),
@@ -785,6 +727,16 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                     await _shareLinkEmail();
                   },
                 ),
+                const Divider(height: 8),
+                ListTile(
+                  leading: const Icon(Icons.screenshot_monitor),
+                  title: const Text('Save visible screenshot (PNG)'),
+                  subtitle: const Text('Captures what’s currently on screen'),
+                  onTap: () async {
+                    Navigator.pop(ctx);
+                    await _downloadVisibleScreenshotPng();
+                  },
+                ),
                 const SizedBox(height: 8),
               ],
             ),
@@ -793,6 +745,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
       },
     );
   }
+
+  // ==========================
+  // DIALOGS + DRAWER (RESTORED)
+  // ==========================
 
   void _showRichInfoDialog(
     BuildContext context,
@@ -869,9 +825,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
-          DrawerHeader(
-            decoration: const BoxDecoration(color: Colors.black),
-            child: const Align(
+          const DrawerHeader(
+            decoration: BoxDecoration(color: Colors.black),
+            child: Align(
               alignment: Alignment.bottomLeft,
               child: Text(
                 'Menu',
@@ -883,6 +839,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               ),
             ),
           ),
+
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('About'),
@@ -893,33 +850,38 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 'About',
                 [
                   const TextSpan(
-                      text: 'STS Profiles\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'STS Profiles\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(text: '(Steam Temporal Satisfaction Profiles)\n'),
                   const TextSpan(
                     text: 'A snapshot of how players evaluate time in play.\n\n',
                     style: TextStyle(fontStyle: FontStyle.italic),
                   ),
                   const TextSpan(
-                      text: 'What it does\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'What it does\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
                     text:
                         'This is a small research prototype that looks at recent Steam user reviews and highlights how players talk about time – things like length, grind, and value for time.\n\n',
                   ),
                   const TextSpan(
-                      text: 'Important\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'Important\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
                     text:
                         'Summaries and sentiment are generated automatically and are indicative only – not official ratings.\n\n',
                   ),
                   const TextSpan(
-                      text: 'Source code\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'Source code\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
-                      text:
-                          'If you want to inspect the code or report issues, the source is available on '),
+                    text:
+                        'If you want to inspect the code or report issues, the source is available on ',
+                  ),
                   TextSpan(
                     text: 'GitHub',
                     style: const TextStyle(
@@ -931,8 +893,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                   ),
                   const TextSpan(text: '.\n\n'),
                   const TextSpan(
-                      text: 'No affiliation\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'No affiliation\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
                     text:
                         'STS Profiles is not affiliated with, sponsored by, or endorsed by Valve, Steam, or any game studio or publisher. All trademarks remain the property of their respective owners.',
@@ -941,7 +904,68 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               );
             },
           ),
+
+          // RESTORED: “How it works” (exact same content as SearchScreen)
+          ListTile(
+            leading: const Icon(Icons.help_outline),
+            title: const Text('How it works'),
+            onTap: () {
+              Navigator.pop(context);
+              _showRichInfoDialog(
+                context,
+                'How it works',
+                [
+                  const TextSpan(
+                    text: 'Searching for a game\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const TextSpan(
+                    text:
+                        'Type part or all of a game’s name into the search box and pick a match from the list. The app uses the public Steam Web API to find games – spellings and regional titles may affect what appears.\n\n',
+                  ),
+                  const TextSpan(
+                    text: 'Collecting reviews\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const TextSpan(
+                    text:
+                        'When you open a game’s analysis page, the app asks Steam for up to a target number of the most recent English-language reviews for that title. If a game has fewer reviews available, the analysis uses whatever is returned.\n\n',
+                  ),
+                  const TextSpan(
+                    text: 'Time-related reviews only\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const TextSpan(
+                    text:
+                        'The app scans review text for time-related keywords grouped into three themes: Length, Grind, and Value. Only reviews that mention at least one theme are shown in the filtered list.\n\n',
+                  ),
+                  const TextSpan(
+                    text: 'Sentiment scope\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const TextSpan(
+                    text:
+                        'Sentiment reflects the time-related parts of a review, not the overall recommendation.\n\n',
+                  ),
+                  const TextSpan(
+                    text: 'Limits and reliability\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const TextSpan(
+                    text:
+                        'Results depend on what players have written recently on Steam. The analysis may be incomplete or inaccurate – treat it as indicative.\n\n',
+                  ),
+                  const TextSpan(
+                    text:
+                        'Automated sentiment can miss context (for example sarcasm, jokes, mixed opinions, or broader complaints that sound “negative” but are not about time). If something looks off, open the full review list and treat the profile as a starting point rather than a verdict.',
+                  ),
+                ],
+              );
+            },
+          ),
+
           const Divider(),
+
           ListTile(
             leading: const Icon(Icons.policy),
             title: const Text('Policy & Privacy'),
@@ -952,29 +976,33 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 'Policy & Privacy',
                 [
                   const TextSpan(
-                      text: 'Data & Privacy\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'Data & Privacy\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
                     text:
                         'This app does not require an account or login. When you search for a game, the app sends the game name and Steam app ID to the public Steam Web API to retrieve recent user reviews.\n\n',
                   ),
                   const TextSpan(
-                      text: 'Third-party services\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'Third-party services\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
                     text:
                         'The app relies on Valve’s public Steam Web API. Content may change or be removed at any time.\n\n',
                   ),
                   const TextSpan(
-                      text: 'No affiliation\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'No affiliation\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
                     text:
                         'This project is not affiliated with, sponsored by, or endorsed by Valve Corporation or Steam.\n\n',
                   ),
                   const TextSpan(
-                      text: 'No warranty\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'No warranty\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
                     text:
                         'The analysis is provided “as-is” without guarantees and should not be treated as professional advice.',
@@ -983,6 +1011,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               );
             },
           ),
+
           ListTile(
             leading: const Icon(Icons.favorite_outline),
             title: const Text('Attribution'),
@@ -993,13 +1022,16 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 'Attribution',
                 [
                   const TextSpan(
-                      text: 'Code\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'Code\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
-                      text: 'Code written with help from Gemini and ChatGPT.\n\n'),
+                    text: 'Code written with help from Gemini and ChatGPT.\n\n',
+                  ),
                   const TextSpan(
-                      text: 'Steam data\n',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+                    text: 'Steam data\n',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   const TextSpan(
                     text:
                         'Steam data © Valve Corporation. All trademarks are property of their respective owners.',
@@ -1008,7 +1040,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               );
             },
           ),
+
           const Divider(),
+
           if (kIsWeb)
             ListTile(
               leading: const Icon(Icons.install_mobile),
@@ -1018,6 +1052,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 _showInstallToHomeScreenDialog();
               },
             ),
+
           ListTile(
             leading: const Icon(Icons.feedback_outlined),
             title: const Text('Feedback & Contact'),
@@ -1026,6 +1061,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               _showFeedbackDialog();
             },
           ),
+
           ListTile(
             leading: const Icon(Icons.local_cafe_outlined),
             title: const Text('Buy me a coffee'),
@@ -1039,147 +1075,147 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-// ---------- Game header ----------
-Widget _buildGameHeaderCard() {
-  final String gameName = widget.selectedGame.name;
-  final String headerImageUrl = widget.selectedGame.headerImageUrl;
+  // ==========================
+  // UI: GAME HEADER
+  // ==========================
 
-  String? developer;
-  String? publisher;
-  String? releaseDate;
-  try {
-    developer = (widget.selectedGame as dynamic).developer as String?;
-  } catch (_) {}
-  try {
-    publisher = (widget.selectedGame as dynamic).publisher as String?;
-  } catch (_) {}
-  try {
-    releaseDate = (widget.selectedGame as dynamic).releaseDate as String?;
-  } catch (_) {}
+  Widget _buildGameHeaderCard() {
+    final String gameName = widget.selectedGame.name;
+    final String headerImageUrl = widget.selectedGame.headerImageUrl;
 
-  final bool showDev = !_isMissingOrNA(developer);
-  final bool showPub = !_isMissingOrNA(publisher);
-  final bool showRelease = !_isMissingOrNA(releaseDate);
+    String? developer;
+    String? publisher;
+    String? releaseDate;
+    try {
+      developer = (widget.selectedGame as dynamic).developer as String?;
+    } catch (_) {}
+    try {
+      publisher = (widget.selectedGame as dynamic).publisher as String?;
+    } catch (_) {}
+    try {
+      releaseDate = (widget.selectedGame as dynamic).releaseDate as String?;
+    } catch (_) {}
 
-  String? releaseYear;
-  if (showRelease) {
-    final rd = releaseDate!.trim();
-    final m = RegExp(r'(\d{4})').firstMatch(rd);
-    releaseYear = m?.group(1) ?? rd;
-  }
+    final bool showDev = !_isMissingOrNA(developer);
+    final bool showPub = !_isMissingOrNA(publisher);
+    final bool showRelease = !_isMissingOrNA(releaseDate);
 
-  Widget metaChip({
-    required String label,
-    required String value,
-    required double maxWidth,
-  }) {
-    final text = '$label: $value';
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: maxWidth),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: Colors.grey.shade300),
-        ),
-        child: Text(
-          text,
-          maxLines: 1,
-          softWrap: false,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            color: Colors.blueGrey.shade800,
-            height: 1.0,
+    String? releaseYear;
+    if (showRelease) {
+      final rd = releaseDate!.trim();
+      final m = RegExp(r'(\d{4})').firstMatch(rd);
+      releaseYear = m?.group(1) ?? rd;
+    }
+
+    Widget metaChip({
+      required String label,
+      required String value,
+      required double maxWidth,
+    }) {
+      final text = '$label: $value';
+      return ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.grey.shade300),
           ),
+          child: Text(
+            text,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Colors.blueGrey.shade800,
+              height: 1.0,
+            ),
+          ),
+        ),
+      );
+    }
+
+    String subtitleLine() {
+      final appIdPart = 'Steam AppID: ${widget.selectedGame.appid}';
+      if (showRelease && releaseYear != null && releaseYear!.trim().isNotEmpty) {
+        return '$appIdPart  •  Released: $releaseYear';
+      }
+      return appIdPart;
+    }
+
+    return Card(
+      elevation: kElevMed,
+      color: Colors.white,
+      surfaceTintColor: Colors.white,
+      margin: const EdgeInsets.only(bottom: kGapS),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildNiceHeaderImage(headerImageUrl),
+            const SizedBox(height: kGapS),
+
+            Text(
+              gameName,
+              style: const TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                height: 1.08,
+              ),
+              maxLines: null,
+              overflow: TextOverflow.visible,
+              softWrap: true,
+            ),
+
+            const SizedBox(height: 4),
+
+            Text(
+              subtitleLine(),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: Colors.blueGrey.shade600,
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            if (showDev || showPub)
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final baseMax = kIsWeb ? 320.0 : 240.0;
+                  final maxW = constraints.maxWidth;
+                  final chipMaxWidth = baseMax.clamp(160.0, maxW);
+
+                  return Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (showDev)
+                        metaChip(
+                          label: 'Developer',
+                          value: developer!.trim(),
+                          maxWidth: chipMaxWidth,
+                        ),
+                      if (showPub)
+                        metaChip(
+                          label: 'Publisher',
+                          value: publisher!.trim(),
+                          maxWidth: chipMaxWidth,
+                        ),
+                    ],
+                  );
+                },
+              ),
+          ],
         ),
       ),
     );
   }
-
-  String subtitleLine() {
-    final appIdPart = 'Steam AppID: ${widget.selectedGame.appid}';
-    if (showRelease && releaseYear != null && releaseYear!.trim().isNotEmpty) {
-      return '$appIdPart  •  Released: $releaseYear';
-    }
-    return appIdPart;
-  }
-
-  return Card(
-    elevation: kElevMed,
-    color: Colors.white,
-    surfaceTintColor: Colors.white,
-    margin: const EdgeInsets.only(bottom: kGapS),
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildNiceHeaderImage(headerImageUrl),
-          const SizedBox(height: kGapS),
-
-          // Title (no truncation)
-          Text(
-            gameName,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              height: 1.08,
-            ),
-            maxLines: null,
-            overflow: TextOverflow.visible,
-            softWrap: true,
-          ),
-
-          const SizedBox(height: 4),
-
-          // Subtitle: Steam AppID then Released (grey line)
-          Text(
-            subtitleLine(),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-              color: Colors.blueGrey.shade600,
-            ),
-          ),
-
-          const SizedBox(height: 10),
-
-          // Chips row (Developer → Publisher) – no icons
-          if (showDev || showPub)
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final baseMax = kIsWeb ? 320.0 : 240.0;
-                final maxW = constraints.maxWidth;
-                final chipMaxWidth = baseMax.clamp(160.0, maxW);
-
-                return Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (showDev)
-                      metaChip(
-                        label: 'Developer',
-                        value: developer!.trim(),
-                        maxWidth: chipMaxWidth,
-                      ),
-                    if (showPub)
-                      metaChip(
-                        label: 'Publisher',
-                        value: publisher!.trim(),
-                        maxWidth: chipMaxWidth,
-                      ),
-                  ],
-                );
-              },
-            ),
-        ],
-      ),
-    ),
-  );
-}
 
   // ---------- Compact scope row ----------
   Widget _buildCompactScopeRow({
@@ -1271,7 +1307,7 @@ Widget _buildGameHeaderCard() {
     ];
 
     final int reviewCountUsed =
-    _analysisResult?.reviewCountAnalyzed ?? _currentReviewCount;
+        _analysisResult?.reviewCountAnalyzed ?? _currentReviewCount;
     final double medianHours = distribution.medianHours;
 
     return Card(
@@ -1644,6 +1680,160 @@ Widget _buildGameHeaderCard() {
     );
   }
 
+  // ==========================
+  // POSTER WIDGET (FULL VISUAL PROFILE)
+  // ==========================
+
+  Widget _buildPosterWidget(AnalysisResult a) {
+    final t = a.thematicScores;
+    final median = a.playtimeDistribution.medianHours;
+    final medianStr = median.isNaN ? 'N/A' : '${median.toStringAsFixed(1)}h';
+
+    // A clean, shareable “poster” layout (static, predictable sizing).
+    return Container(
+      padding: const EdgeInsets.all(18),
+      color: Colors.white,
+      child: DefaultTextStyle(
+        style: const TextStyle(color: Colors.black87),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${widget.selectedGame.name} – STS Profile',
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Steam AppID: ${widget.selectedGame.appid}',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: Colors.black54,
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            _buildNiceHeaderImage(widget.selectedGame.headerImageUrl),
+
+            const SizedBox(height: 14),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _posterStatCard(
+                    title: 'Analysis scope',
+                    value: '${a.reviewCountAnalyzed} reviews',
+                    icon: Icons.insights,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _posterStatCard(
+                    title: 'Themed reviews found',
+                    value: '${a.totalThemedReviews}',
+                    icon: Icons.list_alt,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            _posterStatCard(
+              title: 'Median total playtime',
+              value: medianStr,
+              icon: Icons.timer,
+              big: true,
+            ),
+
+            const SizedBox(height: 12),
+
+            Text(
+              'Thematic Sentiment Breakdown',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 8),
+
+            Row(
+              children: [
+                Expanded(child: _buildThematicScoreCard('length', t.length)),
+                Expanded(child: _buildThematicScoreCard('grind', t.grind)),
+                Expanded(child: _buildThematicScoreCard('value', t.value)),
+              ],
+            ),
+
+            const SizedBox(height: 14),
+
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.grey.shade50,
+              ),
+              child: Text(
+                'Share link: ${_buildShareUrlForGame()}\n\n'
+                'Note: Generated from recent Steam reviews. Automated sentiment is indicative only – not an official rating.',
+                style: const TextStyle(fontSize: 12, color: Colors.black87),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _posterStatCard({
+    required String title,
+    required String value,
+    required IconData icon,
+    bool big = false,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: big ? 22 : 18, color: Colors.blueGrey.shade700),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: big ? 12 : 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.blueGrey.shade700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: big ? 20 : 16,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.black,
+                    height: 1.05,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ==========================
+  // BUILD
+  // ==========================
+
   @override
   Widget build(BuildContext context) {
     final nextReviewCount = _currentReviewCount + 1000;
@@ -1671,7 +1861,7 @@ Widget _buildGameHeaderCard() {
             IconButton(
               icon: const Icon(Icons.ios_share),
               onPressed: _openShareMenu,
-              tooltip: 'Share (PNG + links)',
+              tooltip: 'Share (poster + link)',
             ),
           ],
           Builder(
@@ -1735,228 +1925,206 @@ Widget _buildGameHeaderCard() {
           ),
         ),
         body: _webConstrain(
-          Center(child: Text(_error ?? 'No analysis available for this game yet.')),
+          Center(
+            child: Text(_error ?? 'No analysis available for this game yet.'),
+          ),
         ),
       );
     }
 
-final analysis = _analysisResult!;
+    final analysis = _analysisResult!;
 
-// ✅ Hide/disable “Add 1000 more reviews” when Steam has no more to load
-final bool canAddMore = analysis.canFetchMore &&
-    (analysis.steamTotalReviews == null ||
-        analysis.reviewCountAnalyzed < (analysis.steamTotalReviews ?? 0));
+    // Hide/disable “Add 1000 more reviews” when Steam has no more to load
+    final bool canAddMore = analysis.canFetchMore &&
+        (analysis.steamTotalReviews == null ||
+            analysis.reviewCountAnalyzed < (analysis.steamTotalReviews ?? 0));
 
-return Scaffold(
-  backgroundColor: Colors.white,
-  appBar: buildTopBar(),
-  endDrawer: _buildAppDrawer(context),
-  bottomNavigationBar: Container(
-    height: 20,
-    alignment: Alignment.center,
-    color: Colors.grey.shade200,
-    child: const Text(
-      'Code written by Gemini and ChatGPT',
-      style: TextStyle(fontSize: 10, color: Colors.grey),
-    ),
-  ),
-
-  // ✅ if can't add more: hide the button
-  floatingActionButton: canAddMore
-      ? FloatingActionButton.extended(
-          onPressed: _isLoadingAnalysis
-              ? null
-              : () => _fetchAnalysisData(
-                    reviewCount: nextReviewCount,
-                    allowRollback: true,
-                  ),
-          icon: const Icon(Icons.add, size: 18, color: Colors.white),
-          label: const Text(
-            'Add 1000 more reviews',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-          ),
-          backgroundColor: Colors.black87,
-          foregroundColor: Colors.white,
-          elevation: 5,
-          extendedPadding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        )
-      : null,
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-
-      // ✅ FIX 1: no gap at top
-      // ✅ FIX 2: poster exists for capture but is off-screen and doesn't affect layout
-      body: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          RepaintBoundary(
-            key: _pageCaptureKey,
-            child: _webConstrain(
-              ListView(
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
-                children: [
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: kGapS),
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(color: Colors.red),
-                        textAlign: TextAlign.center,
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: buildTopBar(),
+      endDrawer: _buildAppDrawer(context),
+      bottomNavigationBar: Container(
+        height: 20,
+        alignment: Alignment.center,
+        color: Colors.grey.shade200,
+        child: const Text(
+          'Code written by Gemini and ChatGPT',
+          style: TextStyle(fontSize: 10, color: Colors.grey),
+        ),
+      ),
+      floatingActionButton: canAddMore
+          ? FloatingActionButton.extended(
+              onPressed: _isLoadingAnalysis
+                  ? null
+                  : () => _fetchAnalysisData(
+                        reviewCount: nextReviewCount,
+                        allowRollback: true,
                       ),
-                    ),
-
-                  _buildGameHeaderCard(),
-
-                  _buildCompactScopeRow(
-                    reviewCountUsed: analysis.reviewCountAnalyzed, // ✅ actual collected/analyzed
-                    themedReviewsAvailable: _totalThemedReviewsAvailable,
+              icon: const Icon(Icons.add, size: 18, color: Colors.white),
+              label: const Text(
+                'Add 1000 more reviews',
+                style:
+                    TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+              ),
+              backgroundColor: Colors.black87,
+              foregroundColor: Colors.white,
+              elevation: 5,
+              extendedPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            )
+          : null,
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      body: RepaintBoundary(
+        key: _pageCaptureKey,
+        child: _webConstrain(
+          ListView(
+            controller: _scrollController,
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 16),
+            children: [
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: kGapS),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.red),
+                    textAlign: TextAlign.center,
                   ),
+                ),
 
-                  const SizedBox(height: 6),
+              _buildGameHeaderCard(),
 
-                  _buildPlaytimeDistributionCard(analysis.playtimeDistribution),
+              _buildCompactScopeRow(
+                reviewCountUsed: analysis.reviewCountAnalyzed,
+                themedReviewsAvailable: _totalThemedReviewsAvailable,
+              ),
 
-                  const SizedBox(height: 2),
+              const SizedBox(height: 6),
 
-                  Center(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        Text(
-                          'Thematic Sentiment Breakdown',
-                          style: Theme.of(context)
-                              .textTheme
-                              .headlineSmall
-                              ?.copyWith(fontWeight: FontWeight.w900),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(width: 2),
-                        Transform.translate(
-                          offset: const Offset(0, -12),
-                          child: Tooltip(
-                            message:
-                                'Sentiment by theme from the most recent reviews collected for this analysis (not all reviews on Steam). Tap for details.',
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(10),
-                              onTap: () {
-                                showDialog(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: const Text(
-                                        'Thematic Sentiment Breakdown'),
-                                    content: const Text(
-                                      'This section summarises sentiment for each theme detected in the most recent reviews collected for this analysis (not all reviews on Steam).\n\n'
-                                      'Sentiment is estimated automatically and may miss sarcasm, slang, jokes, or context.',
-                                    ),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () =>
-                                            Navigator.of(ctx).pop(),
-                                        child: const Text('Close'),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                              child: const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 2),
-                                child: Text(
-                                  '*',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w900,
-                                    color: Colors.black87,
-                                    height: 1,
-                                  ),
+              _buildPlaytimeDistributionCard(analysis.playtimeDistribution),
+
+              const SizedBox(height: 2),
+
+              Center(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(
+                      'Thematic Sentiment Breakdown',
+                      style: Theme.of(context)
+                          .textTheme
+                          .headlineSmall
+                          ?.copyWith(fontWeight: FontWeight.w900),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(width: 2),
+                    Transform.translate(
+                      offset: const Offset(0, -12),
+                      child: Tooltip(
+                        message:
+                            'Sentiment by theme from the most recent reviews collected for this analysis (not all reviews on Steam). Tap for details.',
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(10),
+                          onTap: () {
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title:
+                                    const Text('Thematic Sentiment Breakdown'),
+                                content: const Text(
+                                  'This section summarises sentiment for each theme detected in the most recent reviews collected for this analysis (not all reviews on Steam).\n\n'
+                                  'Sentiment is estimated automatically and may miss sarcasm, slang, jokes, or context.',
                                 ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.of(ctx).pop(),
+                                    child: const Text('Close'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 2),
+                            child: Text(
+                              '*',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.black87,
+                                height: 1,
                               ),
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 6),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Expanded(
-                          child: _buildThematicScoreCard(
-                              'length', analysis.thematicScores.length)),
-                      Expanded(
-                          child: _buildThematicScoreCard(
-                              'grind', analysis.thematicScores.grind)),
-                      Expanded(
-                          child: _buildThematicScoreCard(
-                              'value', analysis.thematicScores.value)),
-                    ],
-                  ),
-
-                  const SizedBox(height: kGapS),
-
-                  if (_totalThemedReviewsAvailable == 0) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      'No time-centric reviews found',
-                      style: Theme.of(context).textTheme.titleMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: kGapXS),
-                    const Text(
-                      'Try increasing the analysis scope, or check a different game.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: Colors.black87),
-                    ),
-                  ] else ...[
-                    _buildReviewSentimentFilter(),
-                    const SizedBox(height: kGapXS),
-                    Text(
-                      'Tap a theme (Length, Grind, Value) or sentiment (Positive, Negative, Neutral) to filter the reviews below. Tap again to clear.',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontSize: 11,
-                            fontStyle: FontStyle.italic,
-                            color: Colors.black,
-                          ),
-                    ),
-                    const SizedBox(height: kGapS),
-                    ...reviewsToDisplay.map(_buildReviewTile),
-                    if (_isLoadingReviews)
-                      const Padding(
-                        padding: EdgeInsets.all(8.0),
-                        child: Center(child: CircularProgressIndicator()),
                       ),
-                    if (!_hasMoreReviews && _reviews.isNotEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(8.0),
-                        child: Center(
-                            child: Text('--- End of Themed Reviews ---')),
-                      ),
+                    ),
                   ],
+                ),
+              ),
+
+              const SizedBox(height: 6),
+
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Expanded(
+                      child: _buildThematicScoreCard(
+                          'length', analysis.thematicScores.length)),
+                  Expanded(
+                      child: _buildThematicScoreCard(
+                          'grind', analysis.thematicScores.grind)),
+                  Expanded(
+                      child: _buildThematicScoreCard(
+                          'value', analysis.thematicScores.value)),
                 ],
               ),
-            ),
-          ),
 
-          // Off-screen poster for capture (does not affect layout, avoids top gap)
-          Positioned(
-            left: -5000,
-            top: 0,
-            child: IgnorePointer(
-              ignoring: true,
-              child: Opacity(
-                opacity: 0.0,
-                child: _buildShareCardWidget(analysis),
-              ),
-            ),
+              const SizedBox(height: kGapS),
+
+              if (_totalThemedReviewsAvailable == 0) ...[
+                const SizedBox(height: 4),
+                Text(
+                  'No time-centric reviews found',
+                  style: Theme.of(context).textTheme.titleMedium,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: kGapXS),
+                const Text(
+                  'Try increasing the analysis scope, or check a different game.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Colors.black87),
+                ),
+              ] else ...[
+                _buildReviewSentimentFilter(),
+                const SizedBox(height: kGapXS),
+                Text(
+                  'Tap a theme (Length, Grind, Value) or sentiment (Positive, Negative, Neutral) to filter the reviews below. Tap again to clear.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontSize: 11,
+                        fontStyle: FontStyle.italic,
+                        color: Colors.black,
+                      ),
+                ),
+                const SizedBox(height: kGapS),
+                ...reviewsToDisplay.map(_buildReviewTile),
+                if (_isLoadingReviews)
+                  const Padding(
+                    padding: EdgeInsets.all(8.0),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                if (!_hasMoreReviews && _reviews.isNotEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(8.0),
+                    child: Center(child: Text('--- End of Themed Reviews ---')),
+                  ),
+              ],
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
