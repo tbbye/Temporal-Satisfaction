@@ -137,7 +137,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   bool _isLoadingReviews = false;
   bool _hasMoreReviews = true;
 
-  // Visible screenshot capture (optional)
+  // Visible screenshot capture
   final GlobalKey _pageCaptureKey = GlobalKey();
 
   @override
@@ -535,38 +535,8 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   }
 
   // =============================================================
-  // SHARE: LINKS + POSTER EXPORT
+  // POSTER EXPORT (ONLY AFFECTS THE PNG)
   // =============================================================
-
-  String _buildShareUrlForGame() {
-    final base = Uri.base;
-
-    final params = <String, String>{
-      'appid': widget.selectedGame.appid,
-      'name': widget.selectedGame.name,
-    };
-
-    // Support hash routing: keep fragment route and append query
-    if (base.fragment.isNotEmpty) {
-      final frag = base.fragment;
-      final fragBase = frag.contains('?') ? frag.split('?').first : frag;
-      final q = Uri(queryParameters: params).query;
-      return base.replace(fragment: '$fragBase?$q').toString();
-    }
-
-    // Normal query routing: merge with existing params
-    final merged = Map<String, String>.from(base.queryParameters)..addAll(params);
-    return base.replace(queryParameters: merged).toString();
-  }
-
-  Future<void> _copyShareLink() async {
-    final url = _buildShareUrlForGame();
-    await Clipboard.setData(ClipboardData(text: url));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Share link copied.')),
-    );
-  }
 
   String _safeFileStem() {
     final safeName = widget.selectedGame.name
@@ -645,7 +615,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // Optional: visible screenshot
+  // Visible screenshot
   Future<Uint8List> _capturePngFromKey(GlobalKey key) async {
     final ctx = key.currentContext;
     if (ctx == null) throw Exception('Capture target not ready');
@@ -672,34 +642,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  Future<void> _shareLinkWhatsApp() async {
-    final url = _buildShareUrlForGame();
-    final text = Uri.encodeComponent('STS Profile – $url');
-    await _launchExternalUrl('https://wa.me/?text=$text');
-  }
-
-  Future<void> _shareLinkTelegram() async {
-    final url = Uri.encodeComponent(_buildShareUrlForGame());
-    final text = Uri.encodeComponent('STS Profile');
-    await _launchExternalUrl('https://t.me/share/url?url=$url&text=$text');
-  }
-
-  Future<void> _shareLinkX() async {
-    final url = Uri.encodeComponent(_buildShareUrlForGame());
-    final text = Uri.encodeComponent('STS Profile');
-    await _launchExternalUrl(
-        'https://twitter.com/intent/tweet?text=$text&url=$url');
-  }
-
-  Future<void> _shareLinkEmail() async {
-    final subject =
-        Uri.encodeComponent('STS Profile – ${widget.selectedGame.name}');
-    final body = Uri.encodeComponent(
-        'Here’s the STS Profile link:\n\n${_buildShareUrlForGame()}');
-    await _launchExternalUrl('mailto:?subject=$subject&body=$body');
-  }
-
-  void _openShareMenu() {
+  void _openExportMenu() {
     if (_analysisResult == null) return;
 
     showModalBottomSheet(
@@ -707,7 +650,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
       showDragHandle: true,
       isScrollControlled: true,
       builder: (ctx) {
-        final maxH = MediaQuery.of(ctx).size.height * 0.85;
+        final maxH = MediaQuery.of(ctx).size.height * 0.70;
         return SafeArea(
           child: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxH),
@@ -717,54 +660,12 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 ListTile(
                   leading: const Icon(Icons.image_outlined),
                   title: const Text('Export poster image (PNG)'),
-                  subtitle: const Text('Best way to share the full visual profile'),
+                  subtitle: const Text('Full profile image – best for sharing'),
                   onTap: () async {
                     Navigator.pop(ctx);
                     await _exportPosterPng();
                   },
                 ),
-                ListTile(
-                  leading: const Icon(Icons.link),
-                  title: const Text('Copy share link'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await _copyShareLink();
-                  },
-                ),
-                const Divider(height: 8),
-                ListTile(
-                  leading: const Icon(Icons.chat),
-                  title: const Text('Share link via WhatsApp'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await _shareLinkWhatsApp();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.send),
-                  title: const Text('Share link via Telegram'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await _shareLinkTelegram();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.alternate_email),
-                  title: const Text('Share link via X'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await _shareLinkX();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.email_outlined),
-                  title: const Text('Share link via Email'),
-                  onTap: () async {
-                    Navigator.pop(ctx);
-                    await _shareLinkEmail();
-                  },
-                ),
-                const Divider(height: 8),
                 ListTile(
                   leading: const Icon(Icons.screenshot_monitor),
                   title: const Text('Save visible screenshot (PNG)'),
@@ -876,7 +777,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               ),
             ),
           ),
-
           ListTile(
             leading: const Icon(Icons.info_outline),
             title: const Text('About'),
@@ -944,7 +844,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               );
             },
           ),
-
           ListTile(
             leading: const Icon(Icons.help_outline),
             title: const Text('How it works'),
@@ -990,9 +889,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               );
             },
           ),
-
           const Divider(),
-
           ListTile(
             leading: const Icon(Icons.policy),
             title: const Text('Policy & Privacy'),
@@ -1030,7 +927,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               );
             },
           ),
-
           ListTile(
             leading: const Icon(Icons.favorite_outline),
             title: const Text('Attribution'),
@@ -1059,10 +955,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               );
             },
           ),
-
           const Divider(),
-
-          // ✅ AVAILABLE ON WEB + ANDROID/iOS now (not gated behind kIsWeb)
           ListTile(
             leading: const Icon(Icons.install_mobile),
             title: const Text('Install on home screen'),
@@ -1071,7 +964,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               _showInstallToHomeScreenDialog();
             },
           ),
-
           ListTile(
             leading: const Icon(Icons.feedback_outlined),
             title: const Text('Feedback & Contact'),
@@ -1080,7 +972,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               _showFeedbackDialog();
             },
           ),
-
           ListTile(
             leading: const Icon(Icons.local_cafe_outlined),
             title: const Text('Buy me a coffee'),
@@ -1177,7 +1068,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
           children: [
             _buildNiceHeaderImage(headerImageUrl),
             const SizedBox(height: kGapS),
-
             Text(
               gameName,
               style: const TextStyle(
@@ -1189,9 +1079,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               overflow: TextOverflow.visible,
               softWrap: true,
             ),
-
             const SizedBox(height: 4),
-
             Text(
               subtitleLine(),
               style: TextStyle(
@@ -1200,9 +1088,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 color: Colors.blueGrey.shade600,
               ),
             ),
-
             const SizedBox(height: 10),
-
             if (showDev || showPub)
               LayoutBuilder(
                 builder: (context, constraints) {
@@ -1705,26 +1591,62 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   }
 
   // =============================================================
-  // POSTER EXPORT (ONLY AFFECTS THE PNG)
+  // POSTER WIDGET (FIXED HEADER CROPPING)
   // =============================================================
 
+  /// ✅ Poster header: background can crop, foreground NEVER crops (contain).
   Widget _buildPosterHeaderImage(String url) {
-    if (url.trim().isEmpty) return const SizedBox.shrink();
+    const double h = 190;
+
+    if (url.trim().isEmpty) {
+      return Container(
+        height: h,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        alignment: Alignment.center,
+        child: const Icon(Icons.image_not_supported, size: 34),
+      );
+    }
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
-      child: SizedBox(
-        height: 150, // ✅ smaller than the on-screen banner
-        width: double.infinity,
-        child: Image.network(
-          url,
-          fit: BoxFit.cover,
-          filterQuality: FilterQuality.high,
-          errorBuilder: (context, error, stackTrace) => Container(
-            color: Colors.grey.shade200,
-            alignment: Alignment.center,
-            child: const Icon(Icons.image_not_supported),
-          ),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        height: h,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // background (cropping is fine)
+            Image.network(
+              url,
+              fit: BoxFit.cover,
+              filterQuality: FilterQuality.high,
+              errorBuilder: (context, error, stackTrace) =>
+                  Container(color: Colors.grey.shade200),
+            ),
+            BackdropFilter(
+              filter: ui.ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: Container(color: Colors.white.withValues(alpha: 0.10)),
+            ),
+            // foreground (never crops)
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: Image.network(
+                url,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+                errorBuilder: (context, error, stackTrace) => const Center(
+                  child: Icon(Icons.image_not_supported),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1960,10 +1882,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 color: Colors.black54,
               ),
             ),
-
             const SizedBox(height: 12),
 
-            // ✅ poster-only smaller image
+            // ✅ poster-only header (fixed: no “warped/cropped” logo)
             _buildPosterHeaderImage(widget.selectedGame.headerImageUrl),
 
             const SizedBox(height: 14),
@@ -1999,7 +1920,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
 
             const SizedBox(height: 12),
 
-            // ✅ poster-only playtime distribution included
             _buildPosterPlaytimeDistribution(a.playtimeDistribution),
 
             const SizedBox(height: 14),
@@ -2029,10 +1949,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 borderRadius: BorderRadius.circular(12),
                 color: Colors.grey.shade50,
               ),
-              child: Text(
-                'Share link: ${_buildShareUrlForGame()}\n\n'
+              child: const Text(
                 'Note: Generated from recent Steam reviews. Automated sentiment is indicative only – not an official rating.',
-                style: const TextStyle(fontSize: 12, color: Colors.black87),
+                style: TextStyle(fontSize: 12, color: Colors.black87),
               ),
             ),
           ],
@@ -2070,9 +1989,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
               tooltip: 'Export all themed reviews to CSV',
             ),
             IconButton(
-              icon: const Icon(Icons.ios_share),
-              onPressed: _openShareMenu,
-              tooltip: 'Share (poster + link)',
+              icon: const Icon(Icons.image_outlined),
+              onPressed: _openExportMenu,
+              tooltip: 'Export poster / screenshot',
             ),
           ],
           Builder(
@@ -2202,20 +2121,14 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                     textAlign: TextAlign.center,
                   ),
                 ),
-
               _buildGameHeaderCard(),
-
               _buildCompactScopeRow(
                 reviewCountUsed: analysis.reviewCountAnalyzed,
                 themedReviewsAvailable: _totalThemedReviewsAvailable,
               ),
-
               const SizedBox(height: 6),
-
               _buildPlaytimeDistributionCard(analysis.playtimeDistribution),
-
               const SizedBox(height: 2),
-
               Center(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -2275,9 +2188,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                   ],
                 ),
               ),
-
               const SizedBox(height: 6),
-
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -2292,9 +2203,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                           'value', analysis.thematicScores.value)),
                 ],
               ),
-
               const SizedBox(height: kGapS),
-
               if (_totalThemedReviewsAvailable == 0) ...[
                 const SizedBox(height: 4),
                 Text(

@@ -90,6 +90,9 @@ class _SearchScreenState extends State<SearchScreen> {
   bool _featuredUserScrolling = false;
   bool _autoAdvancingFeatured = false;
 
+  // --- Deep link (web share URLs) ---
+  bool _handledIncomingLink = false;
+
   // Tweak these if you want
   static const Duration _autoAdvanceEvery = Duration(seconds: 5);
   static const Duration _resumeAfterIdle = Duration(seconds: 7);
@@ -102,6 +105,15 @@ class _SearchScreenState extends State<SearchScreen> {
     _initFeaturedCarouselOnDemand();
 
     _startFeaturedAutoAdvance();
+
+    // ✅ Handle shared URLs like:
+    // https://yoursite/#/ OR https://yoursite/?appid=570&name=Dota%202
+    // We only do this on web, and only once.
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _handleIncomingShareLink();
+      });
+    }
 
     _searchController.addListener(() {
       if (!mounted) return;
@@ -190,10 +202,46 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  // ---------- Featured game helpers ----------
+  // ---------- Deep link handling (web share URLs) ----------
 
   String _steamHeaderUrlFromAppId(String appId) =>
       'https://cdn.akamai.steamstatic.com/steam/apps/$appId/header.jpg';
+
+  Future<void> _handleIncomingShareLink() async {
+    if (!mounted) return;
+    if (_handledIncomingLink) return;
+    _handledIncomingLink = true;
+
+    final uri = Uri.base;
+    final appid = uri.queryParameters['appid'];
+    if (appid == null || appid.trim().isEmpty) return;
+
+    final name = (uri.queryParameters['name'] ?? 'Steam App $appid').trim();
+
+    // Build a minimal Game object so analysis can run.
+    // (Developer/publisher/release date will be N/A unless later enriched.)
+    final game = Game(
+      appid: appid.trim(),
+      name: name.isEmpty ? 'Steam App $appid' : name,
+      headerImageUrl: _steamHeaderUrlFromAppId(appid.trim()),
+      developer: 'N/A',
+      publisher: 'N/A',
+      releaseDate: 'N/A',
+    );
+
+    // If the user is actively typing a search, don’t rudely yank them away.
+    if (_searchController.text.trim().isNotEmpty) {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AnalysisScreen(selectedGame: game),
+      ),
+    );
+  }
+
+  // ---------- Featured game helpers ----------
 
   bool _isMissingMeta(String? v) {
     final t = v?.trim() ?? '';
@@ -234,8 +282,9 @@ class _SearchScreenState extends State<SearchScreen> {
           ? data['release_date'] as Map<String, dynamic>
           : null;
 
-      final releaseDate =
-          (releaseDateObj?['date'] is String) ? releaseDateObj!['date'] as String : '';
+      final releaseDate = (releaseDateObj?['date'] is String)
+          ? releaseDateObj!['date'] as String
+          : '';
 
       final headerImage = (data['header_image'] is String)
           ? data['header_image'] as String
@@ -290,7 +339,8 @@ class _SearchScreenState extends State<SearchScreen> {
         enriched.appid != '0';
 
     if (needsMore) {
-      enriched = await _enrichViaSteamStoreApi(enriched.appid, enriched) ?? enriched;
+      enriched = await _enrichViaSteamStoreApi(enriched.appid, enriched) ??
+          enriched;
     }
 
     return enriched;
@@ -326,7 +376,9 @@ class _SearchScreenState extends State<SearchScreen> {
     if (!mounted) return;
     if (index < 0 || index >= _featuredGames.length) return;
 
-    if (_featuredLoaded.contains(index) || _featuredLoading.contains(index)) return;
+    if (_featuredLoaded.contains(index) || _featuredLoading.contains(index)) {
+      return;
+    }
     _featuredLoading.add(index);
 
     final name = kFeaturedGameNames[index];
@@ -563,7 +615,7 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  // --- Install to Home Screen (in-app help) ---
+  // ✅ Install to Home Screen (browser-first instructions, Chrome menu gesture)
   void _showInstallToHomeScreenDialog() {
     showDialog(
       context: context,
@@ -571,13 +623,15 @@ class _SearchScreenState extends State<SearchScreen> {
         title: const Text('Install on home screen'),
         content: const Text(
           'Android (Chrome):\n'
-          '1) Tap the ⋮ menu (top-right)\n'
+          '1) Tap the ⋮ (three-dot) menu (top-right)\n'
           '2) Tap “Install app” or “Add to Home screen”\n\n'
+          'Desktop (Chrome / Edge):\n'
+          '1) Look for the install icon in the address bar (usually a monitor with a down arrow)\n'
+          '2) Or open the ⋮ menu and choose “Install”\n\n'
           'iPhone/iPad (Safari):\n'
-          '1) Tap Share\n'
+          '1) Tap the Share button\n'
           '2) Tap “Add to Home Screen”\n\n'
-          'If you don’t see install options, it usually means the app isn’t being served over HTTPS, '
-          'or the browser doesn’t consider it installable yet.',
+          'If you don’t see install options, the browser may not consider the site installable yet (often HTTPS, a valid manifest, and a service worker are required).',
         ),
         actions: [
           TextButton(
@@ -750,6 +804,18 @@ class _SearchScreenState extends State<SearchScreen> {
             },
           ),
           const Divider(),
+
+          // ✅ This was missing: menu entry that actually opens the install instructions.
+          if (kIsWeb)
+            ListTile(
+              leading: const Icon(Icons.install_mobile),
+              title: const Text('Install on home screen'),
+              onTap: () {
+                Navigator.pop(context);
+                _showInstallToHomeScreenDialog();
+              },
+            ),
+
           ListTile(
             leading: const Icon(Icons.policy),
             title: const Text('Policy & Privacy'),
@@ -774,10 +840,6 @@ class _SearchScreenState extends State<SearchScreen> {
                   const TextSpan(
                     text:
                         'The app relies on Valve’s public Steam Web API. Content may change or be removed at any time.\n\n',
-                  ),
-                  const TextSpan(
-                    text: 'No affiliation\n',
-                    style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const TextSpan(
                     text:
@@ -1054,254 +1116,246 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildFeaturedCarouselCard() {
-  if (_featuredGames.isEmpty) return const SizedBox.shrink();
+    if (_featuredGames.isEmpty) return const SizedBox.shrink();
 
-  final current = _featuredGames[_featuredIndex];
-  final bool isPlaceholder = current.appid == '0';
-  final bool isCurrentLoading = _featuredLoading.contains(_featuredIndex);
+    final current = _featuredGames[_featuredIndex];
+    final bool isPlaceholder = current.appid == '0';
+    final bool isCurrentLoading = _featuredLoading.contains(_featuredIndex);
 
-  Widget buildFeaturedPage(Game g, int index) {
-    final bool pagePlaceholder = g.appid == '0';
-    final bool pageLoading = _featuredLoading.contains(index);
+    Widget buildFeaturedPage(Game g, int index) {
+      final bool pagePlaceholder = g.appid == '0';
+      final bool pageLoading = _featuredLoading.contains(index);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (pagePlaceholder || _safeTrim(g.headerImageUrl).isEmpty)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: AspectRatio(
-              aspectRatio: 460 / 215,
-              child: Container(
-                color: Colors.grey.shade200,
-                child: Center(
-                  child: SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        pageLoading ? Colors.black : Colors.black54,
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (pagePlaceholder || _safeTrim(g.headerImageUrl).isEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: AspectRatio(
+                aspectRatio: 460 / 215,
+                child: Container(
+                  color: Colors.grey.shade200,
+                  child: Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          pageLoading ? Colors.black : Colors.black54,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
+            )
+          else
+            _buildNiceHeaderImage(g.headerImageUrl),
+          const SizedBox(height: 4),
+
+          // Featured game name
+          Text(
+            g.name,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            textHeightBehavior: const TextHeightBehavior(
+              applyHeightToFirstAscent: false,
+              applyHeightToLastDescent: false,
             ),
-          )
-        else
-          _buildNiceHeaderImage(g.headerImageUrl),
-
-        const SizedBox(height: 4),
-
-        // Featured game name
-        Text(
-          g.name,
-          maxLines: 3,
-          overflow: TextOverflow.ellipsis,
-          textHeightBehavior: const TextHeightBehavior(
-            applyHeightToFirstAscent: false,
-            applyHeightToLastDescent: false,
-          ),
-          style: const TextStyle(
-            fontSize: kFeaturedGameNameSize,
-            fontWeight: FontWeight.w900,
-            color: Colors.black,
-            height: 1.05,
-          ),
-        ),
-
-        const SizedBox(height: 2),
-
-        // AppID line
-        Text(
-          pagePlaceholder ? 'Loading…' : 'Steam AppID: ${g.appid}',
-          textHeightBehavior: const TextHeightBehavior(
-            applyHeightToFirstAscent: false,
-            applyHeightToLastDescent: false,
-          ),
-          style: const TextStyle(
-            fontSize: 11,
-            color: Colors.black54,
-            fontWeight: FontWeight.w600,
-            height: 1.05,
-          ),
-        ),
-      ],
-    );
-  }
-
-  return Card(
-    elevation: kElevMed,
-    color: Colors.white,
-    surfaceTintColor: Colors.white,
-    margin: EdgeInsets.zero,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Featured games',
-            style: TextStyle(
-              fontSize: kFeaturedSectionTitleSize,
-              fontWeight: kTitleWeight,
+            style: const TextStyle(
+              fontSize: kFeaturedGameNameSize,
+              fontWeight: FontWeight.w900,
               color: Colors.black,
+              height: 1.05,
             ),
           ),
-          const SizedBox(height: 8),
 
-          LayoutBuilder(
-            builder: (context, constraints) {
-              // Banner height that matches AspectRatio(460/215)
-              final bannerH = constraints.maxWidth * (215 / 460);
+          const SizedBox(height: 2),
 
-              // Tight meta height for: (gap + 3-line title + appid)
-              // If you want even tighter, try 52.0
-              const metaH = 58.0;
+          // AppID line
+          Text(
+            pagePlaceholder ? 'Loading…' : 'Steam AppID: ${g.appid}',
+            textHeightBehavior: const TextHeightBehavior(
+              applyHeightToFirstAscent: false,
+              applyHeightToLastDescent: false,
+            ),
+            style: const TextStyle(
+              fontSize: 11,
+              color: Colors.black54,
+              fontWeight: FontWeight.w600,
+              height: 1.05,
+            ),
+          ),
+        ],
+      );
+    }
 
-              // IMPORTANT: no hard 260 minimum anymore (this was causing the blank space)
-              final totalH = bannerH + metaH;
+    return Card(
+      elevation: kElevMed,
+      color: Colors.white,
+      surfaceTintColor: Colors.white,
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Featured games',
+              style: TextStyle(
+                fontSize: kFeaturedSectionTitleSize,
+                fontWeight: kTitleWeight,
+                color: Colors.black,
+              ),
+            ),
+            const SizedBox(height: 8),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final bannerH = constraints.maxWidth * (215 / 460);
+                const metaH = 58.0;
+                final totalH = bannerH + metaH;
 
-              return SizedBox(
-                height: totalH,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: (n) {
-                    if (n is ScrollStartNotification) {
-                      _featuredUserScrolling = true;
-                      if (!_autoAdvancingFeatured) _markFeaturedUserInteraction();
-                    } else if (n is ScrollEndNotification) {
-                      _featuredUserScrolling = false;
-                      if (!_autoAdvancingFeatured) _markFeaturedUserInteraction();
-                    }
-                    return false;
-                  },
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onPanDown: (_) {
-                      _featuredUserScrolling = true;
-                      _markFeaturedUserInteraction();
-                    },
-                    onPanCancel: () {
-                      _featuredUserScrolling = false;
-                      _markFeaturedUserInteraction();
-                    },
-                    onPanEnd: (_) {
-                      _featuredUserScrolling = false;
-                      _markFeaturedUserInteraction();
-                    },
-                    child: PageView.builder(
-                      controller: _featuredController,
-                      itemCount: _featuredGames.length,
-                      onPageChanged: (i) {
-                        if (!mounted) return;
-
-                        setState(() => _featuredIndex = i);
-
+                return SizedBox(
+                  height: totalH,
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: (n) {
+                      if (n is ScrollStartNotification) {
+                        _featuredUserScrolling = true;
                         if (!_autoAdvancingFeatured) {
                           _markFeaturedUserInteraction();
                         }
-
-                        _ensureFeaturedLoaded(i);
-                        _ensureFeaturedLoaded(i + 1);
-                        _ensureFeaturedLoaded(i - 1);
+                      } else if (n is ScrollEndNotification) {
+                        _featuredUserScrolling = false;
+                        if (!_autoAdvancingFeatured) {
+                          _markFeaturedUserInteraction();
+                        }
+                      }
+                      return false;
+                    },
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onPanDown: (_) {
+                        _featuredUserScrolling = true;
+                        _markFeaturedUserInteraction();
                       },
-                      itemBuilder: (context, index) =>
-                          buildFeaturedPage(_featuredGames[index], index),
+                      onPanCancel: () {
+                        _featuredUserScrolling = false;
+                        _markFeaturedUserInteraction();
+                      },
+                      onPanEnd: (_) {
+                        _featuredUserScrolling = false;
+                        _markFeaturedUserInteraction();
+                      },
+                      child: PageView.builder(
+                        controller: _featuredController,
+                        itemCount: _featuredGames.length,
+                        onPageChanged: (i) {
+                          if (!mounted) return;
+
+                          setState(() => _featuredIndex = i);
+
+                          if (!_autoAdvancingFeatured) {
+                            _markFeaturedUserInteraction();
+                          }
+
+                          _ensureFeaturedLoaded(i);
+                          _ensureFeaturedLoaded(i + 1);
+                          _ensureFeaturedLoaded(i - 1);
+                        },
+                        itemBuilder: (context, index) =>
+                            buildFeaturedPage(_featuredGames[index], index),
+                      ),
                     ),
                   ),
-                ),
-              );
-            },
-          ),
-
-          const SizedBox(height: 6),
-
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(_featuredGames.length, (i) {
-              final bool active = i == _featuredIndex;
-              return AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                margin: const EdgeInsets.symmetric(horizontal: 3),
-                height: 6,
-                width: active ? 16 : 6,
-                decoration: BoxDecoration(
-                  color: active ? Colors.black : Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(99),
-                ),
-              );
-            }),
-          ),
-
-          const SizedBox(height: 8),
-
-          Row(
-            children: [
-              OutlinedButton(
-                onPressed: _featuredIndex > 0
-                    ? () {
-                        _markFeaturedUserInteraction();
-                        _goToFeatured(_featuredIndex - 1);
-                      }
-                    : null,
-                child: const Icon(Icons.chevron_left),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _featuredIndex < _featuredGames.length - 1
-                    ? () {
-                        _markFeaturedUserInteraction();
-                        _goToFeatured(_featuredIndex + 1);
-                      }
-                    : null,
-                child: const Icon(Icons.chevron_right),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _openFeaturedProfileEvenIfLoading,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    minimumSize: const Size(0, 0),
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
+                );
+              },
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(_featuredGames.length, (i) {
+                final bool active = i == _featuredIndex;
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  height: 6,
+                  width: active ? 16 : 6,
+                  decoration: BoxDecoration(
+                    color: active ? Colors.black : Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(99),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const SizedBox(width: 8),
-                      const Text('Open STS Profile'),
-                      if (isPlaceholder || isCurrentLoading) ...[
-                        const SizedBox(width: 10),
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
+                );
+              }),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                OutlinedButton(
+                  onPressed: _featuredIndex > 0
+                      ? () {
+                          _markFeaturedUserInteraction();
+                          _goToFeatured(_featuredIndex - 1);
+                        }
+                      : null,
+                  child: const Icon(Icons.chevron_left),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: _featuredIndex < _featuredGames.length - 1
+                      ? () {
+                          _markFeaturedUserInteraction();
+                          _goToFeatured(_featuredIndex + 1);
+                        }
+                      : null,
+                  child: const Icon(Icons.chevron_right),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _openFeaturedProfileEvenIfLoading,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 12),
+                      minimumSize: const Size(0, 0),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox(width: 8),
+                        const Text('Open STS Profile'),
+                        if (isPlaceholder || isCurrentLoading) ...[
+                          const SizedBox(width: 10),
+                          const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white),
+                            ),
                           ),
-                        ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildEmptyState() {
     return const Center(
@@ -1536,12 +1590,16 @@ class _SearchScreenState extends State<SearchScreen> {
                     hasScrollBody: false,
                     child: _buildEmptyState(),
                   )
-                else if (_searchResults.isEmpty && query.isNotEmpty && _hasSearched)
+                else if (_searchResults.isEmpty &&
+                    query.isNotEmpty &&
+                    _hasSearched)
                   SliverFillRemaining(
                     hasScrollBody: false,
                     child: _buildNoResultsState(),
                   )
-                else if (_searchResults.isEmpty && query.isNotEmpty && !_hasSearched)
+                else if (_searchResults.isEmpty &&
+                    query.isNotEmpty &&
+                    !_hasSearched)
                   SliverFillRemaining(
                     hasScrollBody: false,
                     child: _buildEmptyState(),
