@@ -33,6 +33,10 @@ Given a Steam AppID, the app:
 - Source code: https://github.com/tbbye/Temporal-Satisfaction
 - Related paper: https://dl.acm.org/doi/10.1145/3764687.3764693
 
+## License
+
+This project is licensed under the MIT License – see the LICENSE file for details.
+
 ---
 
 ## Not affiliated
