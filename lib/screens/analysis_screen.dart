@@ -18,8 +18,15 @@ import '../models/playtime_distribution.dart';
 import '../models/review.dart';
 import '../services/api_service.dart';
 
+// =============================================================
+// LINKS
+// =============================================================
 const String _buyMeACoffeeUrl = 'https://www.buymeacoffee.com/tbbye';
 const String _githubUrl = 'https://github.com/tbbye/Temporal-Satisfaction';
+
+// =============================================================
+// LAYOUT CONSTANTS
+// =============================================================
 
 // --- Web layout tuning ---
 const double kWebMaxWidth = 860;
@@ -33,7 +40,11 @@ const double kGapM = 12;
 const double kElevLow = 2.5;
 const double kElevMed = 4;
 
-// --- Header title helper: "(game)’s STS Profile" (safe for long titles) ---
+// =============================================================
+// SMALL HELPERS
+// =============================================================
+
+/// Header title helper: "(game)’s STS Profile" (safe for long titles)
 String stsHeaderTitle(String gameName) {
   final trimmed = gameName.trim();
   if (trimmed.isEmpty) return 'STS Profile';
@@ -84,6 +95,10 @@ class _GridLinePainter extends CustomPainter {
   }
 }
 
+// =============================================================
+// SCREEN
+// =============================================================
+
 class AnalysisScreen extends StatefulWidget {
   final Game selectedGame;
 
@@ -101,18 +116,20 @@ class AnalysisScreen extends StatefulWidget {
 }
 
 class _AnalysisScreenState extends State<AnalysisScreen> {
+  // Services / controllers
   final ApiService _apiService = ApiService();
   final ScrollController _scrollController = ScrollController();
 
+  // Core state
   AnalysisResult? _analysisResult;
   bool _isLoadingAnalysis = true;
   String? _error;
 
-  // --- Filter State ---
+  // Filters
   String? _selectedThemeFilter; // 'length', 'grind', 'value'
   String? _selectedSentimentFilter; // 'Positive', 'Negative', 'Neutral'
 
-  // --- Pagination State ---
+  // Pagination
   List<Review> _reviews = [];
   int _currentReviewCount = 1000;
   int _currentPageOffset = 0;
@@ -120,7 +137,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
   bool _isLoadingReviews = false;
   bool _hasMoreReviews = true;
 
-  // --- Visible screenshot capture (optional) ---
+  // Visible screenshot capture (optional)
   final GlobalKey _pageCaptureKey = GlobalKey();
 
   @override
@@ -136,6 +153,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     _scrollController.dispose();
     super.dispose();
   }
+
+  // =============================================================
+  // BASIC HELPERS
+  // =============================================================
 
   void _onScroll() {
     if (_scrollController.position.pixels ==
@@ -157,7 +178,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     return upper == 'NA' || upper == 'N/A' || upper == 'NONE' || upper == 'NULL';
   }
 
-  // --- Web: constrain width without vertically centring (prevents weird top gaps) ---
+  // Web: constrain width without vertically centring (prevents weird top gaps)
   Widget _webConstrain(Widget child) {
     if (!kIsWeb) return child;
     return Align(
@@ -168,6 +189,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
       ),
     );
   }
+
+  // =============================================================
+  // DATA FETCHING
+  // =============================================================
 
   Future<void> _fetchAnalysisData({
     required int reviewCount,
@@ -285,6 +310,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     }
   }
 
+  // =============================================================
+  // FILTERING
+  // =============================================================
+
   List<Review> get _filteredReviews {
     List<Review> reviews = List.from(_reviews);
 
@@ -316,7 +345,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     });
   }
 
-  // --- Export CSV Logic (do not touch) ---
+  // =============================================================
+  // EXPORT CSV (DO NOT TOUCH)
+  // =============================================================
+
   Future<void> _exportCSVData() async {
     if (_analysisResult == null) return;
 
@@ -370,6 +402,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     }
   }
 
+  // =============================================================
+  // VISUAL HELPERS
+  // =============================================================
+
   Color _getSentimentColor(String sentiment) {
     switch (sentiment.toLowerCase()) {
       case 'positive':
@@ -383,20 +419,21 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     }
   }
 
-  // --- Install to Home Screen (exact same text as SearchScreen) ---
+  // Install to Home Screen (available everywhere now)
   void _showInstallToHomeScreenDialog() {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Install on home screen'),
         content: const Text(
+          'If you are using the STS Profiles website in a mobile browser, you can “install” it to your home screen:\n\n'
           'Android (Chrome):\n'
           '1) Tap the ⋮ menu (top-right)\n'
           '2) Tap “Install app” or “Add to Home screen”\n\n'
           'iPhone/iPad (Safari):\n'
           '1) Tap Share\n'
           '2) Tap “Add to Home Screen”\n\n'
-          'If you don’t see install options, it usually means the app isn’t being served over HTTPS, '
+          'If you don’t see install options, it usually means the site is not being served over HTTPS, '
           'or the browser doesn’t consider it installable yet.',
         ),
         actions: [
@@ -409,7 +446,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // --- Banner image that looks good on wide web screens ---
+  // Banner image (on-screen)
   Widget _buildNiceHeaderImage(String url) {
     if (url.trim().isEmpty) {
       return Container(
@@ -497,9 +534,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // ==========================
-  // SHARE (FIXED)
-  // ==========================
+  // =============================================================
+  // SHARE: LINKS + POSTER EXPORT
+  // =============================================================
 
   String _buildShareUrlForGame() {
     final base = Uri.base;
@@ -608,7 +645,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // Optional: visible screenshot (kept, but not your “main” share path)
+  // Optional: visible screenshot
   Future<Uint8List> _capturePngFromKey(GlobalKey key) async {
     final ctx = key.currentContext;
     if (ctx == null) throw Exception('Capture target not ready');
@@ -746,9 +783,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // ==========================
-  // DIALOGS + DRAWER (RESTORED)
-  // ==========================
+  // =============================================================
+  // DIALOGS + DRAWER
+  // =============================================================
 
   void _showRichInfoDialog(
     BuildContext context,
@@ -889,7 +926,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                       decoration: TextDecoration.underline,
                       fontWeight: FontWeight.w700,
                     ),
-                    recognizer: TapGestureRecognizer()..onTap = _launchGithub,
+                    recognizer: TapGestureRecognizer()
+                      ..onTap = () {
+                        _launchGithub();
+                      },
                   ),
                   const TextSpan(text: '.\n\n'),
                   const TextSpan(
@@ -905,7 +945,6 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
             },
           ),
 
-          // RESTORED: “How it works” (exact same content as SearchScreen)
           ListTile(
             leading: const Icon(Icons.help_outline),
             title: const Text('How it works'),
@@ -916,20 +955,12 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                 'How it works',
                 [
                   const TextSpan(
-                    text: 'Searching for a game\n',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const TextSpan(
-                    text:
-                        'Type part or all of a game’s name into the search box and pick a match from the list. The app uses the public Steam Web API to find games – spellings and regional titles may affect what appears.\n\n',
-                  ),
-                  const TextSpan(
                     text: 'Collecting reviews\n',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const TextSpan(
                     text:
-                        'When you open a game’s analysis page, the app asks Steam for up to a target number of the most recent English-language reviews for that title. If a game has fewer reviews available, the analysis uses whatever is returned.\n\n',
+                        'This page asks Steam for up to a target number of the most recent English-language reviews for this title. If a game has fewer reviews available, the analysis uses whatever is returned.\n\n',
                   ),
                   const TextSpan(
                     text: 'Time-related reviews only\n',
@@ -953,11 +984,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                   ),
                   const TextSpan(
                     text:
-                        'Results depend on what players have written recently on Steam. The analysis may be incomplete or inaccurate – treat it as indicative.\n\n',
-                  ),
-                  const TextSpan(
-                    text:
-                        'Automated sentiment can miss context (for example sarcasm, jokes, mixed opinions, or broader complaints that sound “negative” but are not about time). If something looks off, open the full review list and treat the profile as a starting point rather than a verdict.',
+                        'Automated sentiment can miss context (for example sarcasm, jokes, mixed opinions, or broader complaints that sound “negative” but are not about time). Treat the profile as a starting point rather than a verdict.',
                   ),
                 ],
               );
@@ -981,7 +1008,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                   ),
                   const TextSpan(
                     text:
-                        'This app does not require an account or login. When you search for a game, the app sends the game name and Steam app ID to the public Steam Web API to retrieve recent user reviews.\n\n',
+                        'This app does not require an account or login. When you open a game, the app requests recent public Steam reviews for that Steam app ID.\n\n',
                   ),
                   const TextSpan(
                     text: 'Third-party services\n',
@@ -992,20 +1019,12 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
                         'The app relies on Valve’s public Steam Web API. Content may change or be removed at any time.\n\n',
                   ),
                   const TextSpan(
-                    text: 'No affiliation\n',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const TextSpan(
-                    text:
-                        'This project is not affiliated with, sponsored by, or endorsed by Valve Corporation or Steam.\n\n',
-                  ),
-                  const TextSpan(
                     text: 'No warranty\n',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const TextSpan(
                     text:
-                        'The analysis is provided “as-is” without guarantees and should not be treated as professional advice.',
+                        'The analysis is provided “as is” without guarantees and should not be treated as professional advice.',
                   ),
                 ],
               );
@@ -1043,15 +1062,15 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
 
           const Divider(),
 
-          if (kIsWeb)
-            ListTile(
-              leading: const Icon(Icons.install_mobile),
-              title: const Text('Install on home screen'),
-              onTap: () {
-                Navigator.pop(context);
-                _showInstallToHomeScreenDialog();
-              },
-            ),
+          // ✅ AVAILABLE ON WEB + ANDROID/iOS now (not gated behind kIsWeb)
+          ListTile(
+            leading: const Icon(Icons.install_mobile),
+            title: const Text('Install on home screen'),
+            onTap: () {
+              Navigator.pop(context);
+              _showInstallToHomeScreenDialog();
+            },
+          ),
 
           ListTile(
             leading: const Icon(Icons.feedback_outlined),
@@ -1075,9 +1094,9 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // ==========================
+  // =============================================================
   // UI: GAME HEADER
-  // ==========================
+  // =============================================================
 
   Widget _buildGameHeaderCard() {
     final String gameName = widget.selectedGame.name;
@@ -1217,7 +1236,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // ---------- Compact scope row ----------
+  // Compact scope row
   Widget _buildCompactScopeRow({
     required int reviewCountUsed,
     required int themedReviewsAvailable,
@@ -1290,7 +1309,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // ---------- Playtime distribution card ----------
+  // Playtime distribution card (on-screen)
   Widget _buildPlaytimeDistributionCard(PlaytimeDistribution distribution) {
     final List<double> buckets = distribution.histogramBuckets;
     final double maxBucketValue =
@@ -1466,6 +1485,10 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
+  // =============================================================
+  // THEMATIC SCORE (ON-SCREEN, INTERACTIVE)
+  // =============================================================
+
   Widget _buildThematicScoreCard(String theme, ThemeScore score) {
     final isSelected = _selectedThemeFilter == theme;
 
@@ -1562,7 +1585,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // ---------- Sentiment filter chips ----------
+  // Sentiment filter chips
   Widget _buildReviewSentimentFilter() {
     final sentiments = ['Positive', 'Negative', 'Neutral'];
 
@@ -1595,6 +1618,7 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
+  // Review tile
   Widget _buildReviewTile(Review review) {
     final String sentimentLabel = review.sentimentLabel;
     final double playtime = review.playtimeHours;
@@ -1680,105 +1704,185 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // ==========================
-  // POSTER WIDGET (FULL VISUAL PROFILE)
-  // ==========================
+  // =============================================================
+  // POSTER EXPORT (ONLY AFFECTS THE PNG)
+  // =============================================================
 
-  Widget _buildPosterWidget(AnalysisResult a) {
-    final t = a.thematicScores;
-    final median = a.playtimeDistribution.medianHours;
-    final medianStr = median.isNaN ? 'N/A' : '${median.toStringAsFixed(1)}h';
+  Widget _buildPosterHeaderImage(String url) {
+    if (url.trim().isEmpty) return const SizedBox.shrink();
 
-    // A clean, shareable “poster” layout (static, predictable sizing).
-    return Container(
-      padding: const EdgeInsets.all(18),
-      color: Colors.white,
-      child: DefaultTextStyle(
-        style: const TextStyle(color: Colors.black87),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${widget.selectedGame.name} – STS Profile',
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Steam AppID: ${widget.selectedGame.appid}',
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                color: Colors.black54,
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            _buildNiceHeaderImage(widget.selectedGame.headerImageUrl),
-
-            const SizedBox(height: 14),
-
-            Row(
-              children: [
-                Expanded(
-                  child: _posterStatCard(
-                    title: 'Analysis scope',
-                    value: '${a.reviewCountAnalyzed} reviews',
-                    icon: Icons.insights,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _posterStatCard(
-                    title: 'Themed reviews found',
-                    value: '${a.totalThemedReviews}',
-                    icon: Icons.list_alt,
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            _posterStatCard(
-              title: 'Median total playtime',
-              value: medianStr,
-              icon: Icons.timer,
-              big: true,
-            ),
-
-            const SizedBox(height: 12),
-
-            Text(
-              'Thematic Sentiment Breakdown',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-            ),
-            const SizedBox(height: 8),
-
-            Row(
-              children: [
-                Expanded(child: _buildThematicScoreCard('length', t.length)),
-                Expanded(child: _buildThematicScoreCard('grind', t.grind)),
-                Expanded(child: _buildThematicScoreCard('value', t.value)),
-              ],
-            ),
-
-            const SizedBox(height: 14),
-
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(12),
-                color: Colors.grey.shade50,
-              ),
-              child: Text(
-                'Share link: ${_buildShareUrlForGame()}\n\n'
-                'Note: Generated from recent Steam reviews. Automated sentiment is indicative only – not an official rating.',
-                style: const TextStyle(fontSize: 12, color: Colors.black87),
-              ),
-            ),
-          ],
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: SizedBox(
+        height: 150, // ✅ smaller than the on-screen banner
+        width: double.infinity,
+        child: Image.network(
+          url,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.high,
+          errorBuilder: (context, error, stackTrace) => Container(
+            color: Colors.grey.shade200,
+            alignment: Alignment.center,
+            child: const Icon(Icons.image_not_supported),
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPosterPlaytimeDistribution(PlaytimeDistribution distribution) {
+    final buckets = distribution.histogramBuckets;
+    if (buckets.isEmpty) return const SizedBox.shrink();
+
+    const labels = [
+      '<1h',
+      '1–5h',
+      '5–10h',
+      '10–20h',
+      '20–50h',
+      '50–100h',
+      '100h+',
+    ];
+
+    double maxVal = 0;
+    for (final v in buckets) {
+      if (v > maxVal) maxVal = v;
+    }
+    if (maxVal <= 0) maxVal = 1;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Playtime distribution',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          ...List.generate(buckets.length.clamp(0, labels.length), (i) {
+            final value = buckets[i];
+            final frac = (value / maxVal).clamp(0.0, 1.0);
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 66,
+                    child: Text(
+                      labels[i],
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        value: frac,
+                        minHeight: 10,
+                        backgroundColor: Colors.grey.shade200,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.lightBlue.shade300,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 40,
+                    child: Text(
+                      value.toInt().toString(),
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPosterThemeCard(String themeLabel, ThemeScore score) {
+    final int found = score.found;
+    final double positive = score.positivePercent;
+    final double negative = score.negativePercent;
+
+    String verdict;
+    Color color;
+
+    if (found == 0) {
+      verdict = 'N/A';
+      color = Colors.grey;
+    } else if (positive >= 60) {
+      verdict = 'POSITIVE';
+      color = Colors.green;
+    } else if (negative >= 60) {
+      verdict = 'NEGATIVE';
+      color = Colors.red;
+    } else {
+      verdict = 'MIXED';
+      color = Colors.orange;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+      ),
+      child: Column(
+        children: [
+          Text(
+            '$themeLabel\nSENTIMENT',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontWeight: FontWeight.w900,
+              fontSize: 12,
+              height: 1.1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            verdict,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              color: color,
+              height: 1.0,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            found == 0 ? '—' : '${positive.toStringAsFixed(1)}% Positive',
+            style: const TextStyle(fontSize: 11, color: Colors.black54),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            found == 0 ? '0 reviews' : '$found reviews',
+            style: const TextStyle(fontSize: 11, color: Colors.black54),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
@@ -1830,9 +1934,116 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
     );
   }
 
-  // ==========================
+  Widget _buildPosterWidget(AnalysisResult a) {
+    final t = a.thematicScores;
+    final median = a.playtimeDistribution.medianHours;
+    final medianStr = median.isNaN ? 'N/A' : '${median.toStringAsFixed(1)}h';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      color: Colors.white,
+      child: DefaultTextStyle(
+        style: const TextStyle(color: Colors.black87),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${widget.selectedGame.name} – STS Profile',
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Steam AppID: ${widget.selectedGame.appid}',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: Colors.black54,
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // ✅ poster-only smaller image
+            _buildPosterHeaderImage(widget.selectedGame.headerImageUrl),
+
+            const SizedBox(height: 14),
+
+            Row(
+              children: [
+                Expanded(
+                  child: _posterStatCard(
+                    title: 'Analysis scope',
+                    value: '${a.reviewCountAnalyzed} reviews',
+                    icon: Icons.insights,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _posterStatCard(
+                    title: 'Themed reviews found',
+                    value: '${a.totalThemedReviews}',
+                    icon: Icons.list_alt,
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 12),
+
+            _posterStatCard(
+              title: 'Median total playtime',
+              value: medianStr,
+              icon: Icons.timer,
+              big: true,
+            ),
+
+            const SizedBox(height: 12),
+
+            // ✅ poster-only playtime distribution included
+            _buildPosterPlaytimeDistribution(a.playtimeDistribution),
+
+            const SizedBox(height: 14),
+
+            const Text(
+              'Thematic Sentiment Breakdown',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 10),
+
+            Row(
+              children: [
+                Expanded(child: _buildPosterThemeCard('LENGTH', t.length)),
+                const SizedBox(width: 10),
+                Expanded(child: _buildPosterThemeCard('GRIND', t.grind)),
+                const SizedBox(width: 10),
+                Expanded(child: _buildPosterThemeCard('VALUE', t.value)),
+              ],
+            ),
+
+            const SizedBox(height: 14),
+
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.grey.shade50,
+              ),
+              child: Text(
+                'Share link: ${_buildShareUrlForGame()}\n\n'
+                'Note: Generated from recent Steam reviews. Automated sentiment is indicative only – not an official rating.',
+                style: const TextStyle(fontSize: 12, color: Colors.black87),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // =============================================================
   // BUILD
-  // ==========================
+  // =============================================================
 
   @override
   Widget build(BuildContext context) {
