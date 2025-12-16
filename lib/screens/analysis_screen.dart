@@ -426,15 +426,16 @@ class _AnalysisScreenState extends State<AnalysisScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Install on home screen'),
         content: const Text(
-          'If you are using the STS Profiles website in a mobile browser, you can “install” it to your home screen:\n\n'
           'Android (Chrome):\n'
-          '1) Tap the ⋮ menu (top-right)\n'
+          '1) Tap the ⋮ (three-dot) menu (top-right)\n'
           '2) Tap “Install app” or “Add to Home screen”\n\n'
+          'Desktop (Chrome / Edge):\n'
+          '1) Look for the install icon in the address bar (usually a monitor with a down arrow)\n'
+          '2) Or open the ⋮ menu and choose “Install”\n\n'
           'iPhone/iPad (Safari):\n'
-          '1) Tap Share\n'
+          '1) Tap the Share button\n'
           '2) Tap “Add to Home Screen”\n\n'
-          'If you don’t see install options, it usually means the site is not being served over HTTPS, '
-          'or the browser doesn’t consider it installable yet.',
+          'If you don’t see install options, the browser may not consider the site installable yet (often HTTPS, a valid manifest, and a service worker are required).',
         ),
         actions: [
           TextButton(
